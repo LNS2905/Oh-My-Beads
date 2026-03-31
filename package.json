@@ -1,0 +1,28 @@
+{
+  "name": "oh-my-beads",
+  "version": "1.0.0",
+  "description": "Multi-agent orchestration plugin for Claude Code using beads_village",
+  "type": "module",
+  "files": [
+    ".claude-plugin",
+    "skills",
+    "hooks",
+    ".mcp.json",
+    "AGENTS.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LNS2905/oh-my-beads.git"
+  },
+  "author": "sangnhat",
+  "license": "MIT",
+  "keywords": [
+    "claude-code",
+    "plugin",
+    "multi-agent",
+    "orchestration",
+    "beads-village"
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "oh-my-beads",
+  "description": "Multi-agent orchestration using beads_village — Scout, Architect, Worker, Reviewer under a Master Orchestrator",
+  "owner": {
+    "name": "sangnhat",
+    "url": "https://github.com/LNS2905"
+  },
+  "plugins": [
+    {
+      "name": "oh-my-beads",
+      "description": "Multi-agent orchestration plugin for Claude Code with 8-step workflow, 3 HITL gates, and beads_village concurrency management",
+      "version": "1.0.0",
+      "author": {
+        "name": "sangnhat"
+      },
+      "source": "./",
+      "category": "productivity",
+      "homepage": "https://github.com/LNS2905/oh-my-beads",
+      "tags": ["multi-agent", "orchestration", "beads-village", "task-tracking", "workflow"]
+    }
+  ],
+  "version": "1.0.0"
+}

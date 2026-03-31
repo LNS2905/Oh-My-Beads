@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "beads-village": {
+      "command": "beads-village",
+      "env": {
+        "BEADS_WORKING_DIR": "${workspaceFolder}"
+      }
+    }
+  }
+}

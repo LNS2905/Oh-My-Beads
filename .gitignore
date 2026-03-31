@@ -1,0 +1,25 @@
+# Runtime state — transient, never commit
+.oh-my-beads/state/
+.oh-my-beads/handoffs/
+
+# Keep runtime directories via gitkeep
+!.oh-my-beads/state/.gitkeep
+!.oh-my-beads/handoffs/.gitkeep
+
+# Plan files are committed (they represent approved work)
+# .oh-my-beads/plans/ is NOT ignored
+
+# History is committed (decisions and learnings persist)
+# .oh-my-beads/history/ is NOT ignored
+
+# Node
+node_modules/
+
+# Reference repos (not part of the plugin)
+agent-hive-ref/
+mcp-beads-village-ref/
+oh-my-claudecode-ref/
+skills-ref/
+
+# OMC session data
+.omc/

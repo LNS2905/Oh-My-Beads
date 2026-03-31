@@ -62,9 +62,10 @@ function ensureStateDir() {
 function writeSessionState(phase) {
   ensureStateDir();
   const state = {
-    phase,
+    current_phase: phase,
     active: true,
-    startedAt: new Date().toISOString(),
+    started_at: new Date().toISOString(),
+    reinforcement_count: 0,
   };
   writeFileSync(join(STATE_DIR, "session.json"), JSON.stringify(state, null, 2));
 }
@@ -75,7 +76,8 @@ function clearSessionState() {
     try {
       const state = JSON.parse(readFileSync(sessionFile, "utf8"));
       state.active = false;
-      state.cancelledAt = new Date().toISOString();
+      state.current_phase = "cancelled";
+      state.cancelled_at = new Date().toISOString();
       writeFileSync(sessionFile, JSON.stringify(state, null, 2));
     } catch {
       rmSync(sessionFile, { force: true });
@@ -95,8 +97,7 @@ process.stdin.on("end", () => {
     if (!kw.pattern.test(clean)) continue;
 
     // Skip informational context ("what is omb?")
-    const kwName = kw.pattern.source.includes("oh-my-beads") ? "oh-my-beads" : "omb";
-    if (kw.action === "invoke" && isInformational(clean, kwName)) continue;
+    if (kw.action === "invoke" && (isInformational(clean, "omb") || isInformational(clean, "oh-my-beads"))) continue;
 
     if (kw.action === "cancel") {
       clearSessionState();

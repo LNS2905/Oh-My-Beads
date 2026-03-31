@@ -38,7 +38,7 @@ if (existsSync(STATE_FILE)) {
     const state = JSON.parse(readFileSync(STATE_FILE, "utf8"));
     if (state.active) {
       parts.push(
-        `\nACTIVE SESSION DETECTED — Phase: ${state.phase || "unknown"}, started: ${state.startedAt || "unknown"}.` +
+        `\nACTIVE SESSION DETECTED — Phase: ${state.current_phase || state.phase || "unknown"}, started: ${state.started_at || state.startedAt || "unknown"}.` +
         `\nResume by saying "omb" or start fresh with "cancel omb" first.`
       );
     }

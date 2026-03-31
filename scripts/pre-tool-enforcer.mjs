@@ -3,41 +3,136 @@
 /**
  * oh-my-beads pre-tool enforcer.
  *
- * Enforces tool access control per agent role as defined in AGENTS.md:
+ * Enforces tool access control per agent role as defined in AGENTS.md.
+ * Also includes a Bash permission handler for dangerous commands.
  *
- * | Agent     | NEVER use                                      |
- * |-----------|------------------------------------------------|
- * | Master    | Write, Edit (no implementation code)           |
- * | Scout     | Write, Edit, reserve, claim, done, Agent       |
- * | Architect | Write, Edit, reserve, claim, done              |
- * | Worker    | ls, assign, graph, done, Agent, AskUserQuestion|
- * | Reviewer  | Write, Edit, reserve, release, claim, done, Agent|
+ * Role matrix:
+ * | Agent            | NEVER use                                            |
+ * |------------------|------------------------------------------------------|
+ * | Master           | Write, Edit (no implementation code)                 |
+ * | Scout            | Write, Edit, reserve, claim, done, Agent             |
+ * | Architect        | Write, Edit, reserve, claim, done                    |
+ * | Worker           | ls, assign, graph, done, Agent, AskUserQuestion      |
+ * | Reviewer         | Write, Edit, reserve, release, claim, done, Agent    |
+ * | Explorer         | Write, Edit, Agent                                   |
+ * | Executor         | Agent, AskUserQuestion                               |
+ * | Verifier         | Write, Edit, Agent                                   |
+ * | Code-Reviewer    | Write, Edit, Agent                                   |
+ * | Security-Reviewer| Write, Edit, Agent                                   |
+ * | Test-Engineer    | Agent (can Write/Edit test files only)                |
  *
- * Detection: Checks CLAUDE_AGENT_NAME or prompt context for role hints.
+ * Bash safeguards (all roles):
+ * - Block: rm -rf /, drop database, format commands
+ * - Warn: git push --force, git reset --hard
  */
 
-import { readFileSync, existsSync } from "fs";
+import { existsSync } from "fs";
 import { join } from "path";
 
+// --- Role Restrictions ---
+const BV = (name) => `mcp__beads-village__${name}`;
+
 const ROLE_RESTRICTIONS = {
-  master:   { deny: ["Write", "Edit"], msg: "Master must not write implementation code." },
-  scout:    { deny: ["Write", "Edit", "mcp__beads-village__reserve", "mcp__beads-village__claim", "mcp__beads-village__done", "Agent"], msg: "Scout is read-only and does not use beads_village execution tools." },
-  architect:{ deny: ["Write", "Edit", "mcp__beads-village__reserve", "mcp__beads-village__claim", "mcp__beads-village__done"], msg: "Architect does not write code or claim beads." },
-  worker:   { deny: ["mcp__beads-village__ls", "mcp__beads-village__assign", "mcp__beads-village__graph", "mcp__beads-village__done", "Agent", "AskUserQuestion"], msg: "Worker must not orchestrate or close beads." },
-  reviewer: { deny: ["Write", "Edit", "mcp__beads-village__reserve", "mcp__beads-village__release", "mcp__beads-village__claim", "mcp__beads-village__done", "Agent"], msg: "Reviewer is read-only." },
+  master: {
+    deny: ["Write", "Edit"],
+    msg: "Master must not write implementation code.",
+  },
+  scout: {
+    deny: ["Write", "Edit", BV("reserve"), BV("claim"), BV("done"), "Agent"],
+    msg: "Scout is read-only and does not use beads_village execution tools.",
+  },
+  architect: {
+    deny: ["Write", "Edit", BV("reserve"), BV("claim"), BV("done")],
+    msg: "Architect does not write code or claim beads.",
+  },
+  worker: {
+    deny: [BV("ls"), BV("assign"), BV("graph"), BV("done"), "Agent", "AskUserQuestion"],
+    msg: "Worker must not orchestrate or close beads.",
+  },
+  reviewer: {
+    deny: ["Write", "Edit", BV("reserve"), BV("release"), BV("claim"), BV("done"), "Agent"],
+    msg: "Reviewer is read-only.",
+  },
+  explorer: {
+    deny: ["Write", "Edit", "Agent"],
+    msg: "Explorer is read-only.",
+  },
+  executor: {
+    deny: ["Agent", "AskUserQuestion"],
+    msg: "Executor must not spawn sub-agents or ask user questions.",
+  },
+  verifier: {
+    deny: ["Write", "Edit", "Agent"],
+    msg: "Verifier is read-only.",
+  },
+  "code-reviewer": {
+    deny: ["Write", "Edit", "Agent"],
+    msg: "Code Reviewer is read-only.",
+  },
+  "security-reviewer": {
+    deny: ["Write", "Edit", "Agent"],
+    msg: "Security Reviewer is read-only.",
+  },
+  "test-engineer": {
+    deny: ["Agent"],
+    msg: "Test Engineer must not spawn sub-agents.",
+    // Note: test-engineer CAN use Write/Edit, but only on test files.
+    // The fileRestriction is checked separately below.
+    fileRestriction: /\.(test|spec)\.[^/]+$|^test\//,
+  },
 };
 
+// --- Dangerous Bash Commands ---
+const BASH_BLOCKLIST = [
+  { pattern: /rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?\/\s*$/,   reason: "Refusing rm on root filesystem" },
+  { pattern: /rm\s+-rf\s+\/(?!\S)/,                        reason: "Refusing rm -rf /" },
+  { pattern: /mkfs\b/,                                     reason: "Refusing filesystem format" },
+  { pattern: /dd\s+.*of=\/dev\//,                          reason: "Refusing dd to device" },
+  { pattern: /:(){ :|:& };:/,                              reason: "Refusing fork bomb" },
+  { pattern: /DROP\s+DATABASE/i,                            reason: "Refusing DROP DATABASE" },
+  { pattern: /DROP\s+TABLE/i,                               reason: "Refusing DROP TABLE" },
+  { pattern: />\s*\/dev\/sd[a-z]/,                          reason: "Refusing write to block device" },
+];
+
+const BASH_WARNINGS = [
+  { pattern: /git\s+push\s+.*--force/,   warning: "Force push detected. Confirm with user first." },
+  { pattern: /git\s+reset\s+--hard/,     warning: "Hard reset detected. This discards uncommitted changes." },
+  { pattern: /git\s+clean\s+-[a-zA-Z]*f/, warning: "Git clean -f detected. This deletes untracked files." },
+  { pattern: /npm\s+publish/,            warning: "npm publish detected. Confirm with user first." },
+];
+
+// --- Helpers ---
 function detectRole(input) {
   // Check env var first (set when spawning sub-agents)
   const envRole = process.env.OMB_AGENT_ROLE;
-  if (envRole && ROLE_RESTRICTIONS[envRole.toLowerCase()]) return envRole.toLowerCase();
+  if (envRole) {
+    const normalized = envRole.toLowerCase().replace(/_/g, "-");
+    if (ROLE_RESTRICTIONS[normalized]) return normalized;
+  }
 
   // Heuristic: look for role identifiers in the tool call context
   const text = typeof input === "string" ? input : JSON.stringify(input);
   for (const role of Object.keys(ROLE_RESTRICTIONS)) {
-    if (new RegExp(`\\b${role}\\b`, "i").test(text)) return role;
+    const pattern = role.includes("-")
+      ? new RegExp(`\\b${role.replace("-", "[\\s_-]")}\\b`, "i")
+      : new RegExp(`\\b${role}\\b`, "i");
+    if (pattern.test(text)) return role;
   }
   return null;
+}
+
+function extractBashCommand(data) {
+  return data.tool_input?.command
+    ?? data.toolInput?.command
+    ?? null;
+}
+
+function extractFilePath(data) {
+  return data.tool_input?.file_path
+    ?? data.toolInput?.file_path
+    ?? data.tool_input?.filePath
+    ?? data.toolInput?.filePath
+    ?? null;
 }
 
 function hookOutput(decision, reason) {
@@ -47,7 +142,9 @@ function hookOutput(decision, reason) {
       hookEventName: "PreToolUse",
       ...(decision === "block"
         ? { additionalContext: `BLOCKED: ${reason}` }
-        : {}),
+        : decision === "warn"
+          ? { additionalContext: `WARNING: ${reason}` }
+          : {}),
     },
   };
   process.stdout.write(JSON.stringify(output));
@@ -69,6 +166,26 @@ process.stdin.on("end", () => {
   const toolName = data.tool_name ?? data.toolName ?? "";
   const role = detectRole(data);
 
+  // --- Bash safety checks (all roles) ---
+  if (toolName === "Bash") {
+    const command = extractBashCommand(data);
+    if (command) {
+      for (const { pattern, reason } of BASH_BLOCKLIST) {
+        if (pattern.test(command)) {
+          hookOutput("block", `${reason}. Command: ${command.substring(0, 100)}`);
+          return;
+        }
+      }
+      for (const { pattern, warning } of BASH_WARNINGS) {
+        if (pattern.test(command)) {
+          hookOutput("warn", warning);
+          return;
+        }
+      }
+    }
+  }
+
+  // No role detected → allow
   if (!role) {
     hookOutput("allow");
     return;
@@ -80,10 +197,23 @@ process.stdin.on("end", () => {
     return;
   }
 
+  // Check tool deny list
   const blocked = restrictions.deny.find((t) => toolName === t || toolName.startsWith(t));
   if (blocked) {
     hookOutput("block", `${restrictions.msg} Tool '${toolName}' is not allowed for ${role} role.`);
     return;
+  }
+
+  // Check file restriction for test-engineer
+  if (restrictions.fileRestriction && (toolName === "Write" || toolName === "Edit")) {
+    const filePath = extractFilePath(data);
+    if (filePath && !restrictions.fileRestriction.test(filePath)) {
+      hookOutput("block",
+        `${role} can only modify test files (*.test.*, *.spec.*, test/*). ` +
+        `Attempted: ${filePath}`
+      );
+      return;
+    }
   }
 
   hookOutput("allow");

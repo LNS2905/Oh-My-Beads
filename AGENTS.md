@@ -186,13 +186,21 @@ Runs **per bead**, immediately after each Worker completes:
 
 ## Agent Roles
 
-| Agent | Skill | Writes Code? | beads_village Tools | Model |
-|-------|-------|-------------|-------------------|-------|
-| **Master** | `oh-my-beads:master` | NO | init, ls, show, done, assign, graph, bv_plan, bv_insights, reservations, doctor, msg, inbox | opus |
-| **Scout** | `oh-my-beads:scout` | NO | (none) | opus |
-| **Architect** | `oh-my-beads:architect` | NO | add (via Master) | opus |
-| **Worker** | `oh-my-beads:worker` | YES | init, claim, show, reserve, release, msg | sonnet |
-| **Reviewer** | `oh-my-beads:reviewer` | NO | ls, show, msg | sonnet |
+Agent definitions live in `agents/*.md`. Each file defines the agent's role, model, constraints, and protocol.
+
+| Agent | Agent File | Skill | Writes Code? | beads_village Tools | Model |
+|-------|-----------|-------|-------------|-------------------|-------|
+| **Master** | `agents/master.md` | `oh-my-beads:master` | NO | init, ls, show, done, assign, graph, bv_plan, bv_insights, reservations, doctor, msg, inbox | opus |
+| **Scout** | `agents/scout.md` | `oh-my-beads:scout` | NO | (none) | opus |
+| **Architect** | `agents/architect.md` | `oh-my-beads:architect` | NO | add (via Master) | opus |
+| **Worker** | `agents/worker.md` | `oh-my-beads:worker` | YES | init, claim, show, reserve, release, msg | sonnet |
+| **Reviewer** | `agents/reviewer.md` | `oh-my-beads:reviewer` | NO | ls, show, msg | sonnet |
+| **Explorer** | `agents/explorer.md` | — | NO | (none) | haiku |
+| **Executor** | `agents/executor.md` | — | YES | (none) | sonnet/opus |
+| **Verifier** | `agents/verifier.md` | — | NO | (none) | sonnet |
+| **Code Reviewer** | `agents/code-reviewer.md` | — | NO | (none) | opus |
+| **Security Reviewer** | `agents/security-reviewer.md` | — | NO | (none) | sonnet |
+| **Test Engineer** | `agents/test-engineer.md` | — | Test files only | (none) | sonnet |
 
 ## Context Isolation
 
@@ -258,17 +266,39 @@ OhMyBeads/                              # Plugin root (git repo)
 │   └── marketplace.json                # Marketplace registry entry
 ├── package.json                        # npm package metadata
 ├── .mcp.json                           # MCP server config (beads_village)
+├── agents/                             # Agent role definitions
+│   ├── master.md                       # Master Orchestrator agent
+│   ├── scout.md                        # Scout (requirements) agent
+│   ├── architect.md                    # Architect (planning) agent
+│   ├── worker.md                       # Worker (implementation) agent
+│   └── reviewer.md                     # Reviewer (quality) agent
 ├── hooks/
-│   └── hooks.json                      # Session-start bootstrap hook
+│   └── hooks.json                      # Event-driven hooks config
+├── scripts/                            # Hook runtime scripts
+│   ├── run.cjs                         # Hook wrapper (spawns .mjs scripts)
+│   ├── keyword-detector.mjs            # UserPromptSubmit: "omb" detection
+│   ├── session-start.mjs              # SessionStart: bootstrap + resume
+│   ├── pre-tool-enforcer.mjs          # PreToolUse: role-based access control
+│   ├── post-tool-verifier.mjs         # PostToolUse: failure detection & tracking
+│   ├── persistent-mode.cjs            # Stop: autonomy engine (blocks premature stops)
+│   ├── subagent-tracker.mjs           # Subagent lifecycle tracking
+│   └── verify-deliverables.mjs        # Verify subagent outputs by role
 ├── skills/                             # All skills at plugin root
 │   ├── using-oh-my-beads/SKILL.md      # Bootstrap & entry point
 │   ├── master/SKILL.md                 # Master Orchestrator (8-step)
 │   ├── scout/SKILL.md                  # Phase 1: Socratic exploration
 │   ├── architect/SKILL.md              # Phases 2-4: Planning & decomposition
 │   ├── worker/SKILL.md                 # Phase 6: Implementation
-│   └── reviewer/SKILL.md              # Phases 5 & 7: Validation & review
+│   ├── reviewer/SKILL.md              # Phases 5 & 7: Validation & review
+│   ├── cancel/SKILL.md               # Cancel active session
+│   └── doctor/SKILL.md               # Diagnose workspace health
+├── test/
+│   └── run-tests.mjs                  # Hook simulation test harness
 ├── .oh-my-beads/                       # Runtime workspace (per-project)
-│   ├── state/session.json              # Current phase, progress
+│   ├── state/
+│   │   ├── session.json                # Current phase, progress, reinforcement count
+│   │   ├── tool-tracking.json          # Files modified, failures detected
+│   │   └── subagent-tracking.json      # Spawned subagent lifecycle
 │   ├── plans/plan.md                   # Approved implementation plan
 │   ├── handoffs/phase_<N>.md           # Phase transition context
 │   └── history/

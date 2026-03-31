@@ -25,6 +25,10 @@ const ROLE_DELIVERABLES = {
     files: ["history/*/CONTEXT.md"],
     description: "CONTEXT.md with locked decisions",
   },
+  "fast-scout": {
+    messages: true,
+    description: "Analysis summary with root cause and affected files",
+  },
   architect: {
     files: ["plans/plan.md"],
     description: "Implementation plan or bead decomposition",
@@ -73,6 +77,17 @@ function detectRole(data) {
   const role = data.agent_role ?? data.agentRole ?? data.role ?? null;
   if (role) return role.toLowerCase();
 
+  // Claude Code native: agent_type field from SubagentStart/SubagentStop hooks
+  const agentType = data.agent_type ?? data.agentType ?? null;
+  if (agentType) {
+    const normalized = agentType.toLowerCase().replace(/_/g, "-");
+    // Strip plugin prefix if present (e.g. "oh-my-beads:scout" → "scout")
+    const stripped = normalized.includes(":") ? normalized.split(":").pop() : normalized;
+    for (const r of ["fast-scout", "scout", "architect", "worker", "reviewer", "master", "executor", "explorer", "verifier"]) {
+      if (stripped === r || stripped.includes(r)) return r;
+    }
+  }
+
   // Heuristic: scan the agent description/prompt for role hints
   const text = [
     data.description ?? "",
@@ -80,14 +95,19 @@ function detectRole(data) {
     data.prompt ?? "",
   ].join(" ").toLowerCase();
 
-  for (const r of ["scout", "architect", "worker", "reviewer", "master"]) {
+  for (const r of ["fast-scout", "scout", "architect", "worker", "reviewer", "master"]) {
     if (text.includes(r)) return r;
   }
   return "unknown";
 }
 
 function detectEvent(data) {
-  // Check for explicit hook event name
+  // Claude Code passes hook_event_name for native SubagentStart/SubagentStop hooks
+  const hookName = data.hook_event_name ?? data.hookEventName ?? "";
+  if (hookName === "SubagentStop") return "stop";
+  if (hookName === "SubagentStart") return "start";
+
+  // Fallback: check for explicit hook event name in other fields
   const event = data.hook_event ?? data.hookEvent ?? data.event ?? "";
   if (event.toLowerCase().includes("stop")) return "stop";
   if (event.toLowerCase().includes("start")) return "start";

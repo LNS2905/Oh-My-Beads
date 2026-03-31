@@ -18,6 +18,13 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import { join, dirname } from "path";
 
+// --- Atomic write helper ---
+function writeJsonAtomic(filePath, data) {
+  const tmp = `${filePath}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(data, null, 2));
+  renameSync(tmp, filePath);
+}
+
 // --- Constants ---
 const FAILURE_KEYWORDS = [
   /error TS\d+/i,            // TypeScript errors
@@ -152,7 +159,7 @@ process.stdin.on("end", async () => {
 
       try {
         mkdirSync(stateDir, { recursive: true });
-        writeFileSync(sessionFile, JSON.stringify(session, null, 2));
+        writeJsonAtomic(sessionFile, session);
       } catch { /* best effort */ }
     }
   }
@@ -160,7 +167,7 @@ process.stdin.on("end", async () => {
   // Persist tracking state
   try {
     mkdirSync(stateDir, { recursive: true });
-    writeFileSync(trackingFile, JSON.stringify(tracking, null, 2));
+    writeJsonAtomic(trackingFile, tracking);
   } catch { /* best effort */ }
 
   // Generate advisory context if failure detected

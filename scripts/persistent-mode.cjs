@@ -26,10 +26,12 @@ const MAX_REINFORCEMENTS = 50;
 const STALE_THRESHOLD_MS = 2 * 60 * 60 * 1000; // 2 hours
 
 const TERMINAL_PHASES = new Set([
-  "complete", "completed", "failed", "cancelled", "canceled"
+  "complete", "completed", "failed", "cancelled", "canceled",
+  "fast_complete",
 ]);
 
 const PHASE_CONTINUATIONS = {
+  // Mr.Beads phases (8-step workflow)
   "bootstrap":                "Continue to Phase 1: Spawn Scout for requirements exploration.",
   "phase_1_exploration":      "Continue Phase 1: Scout is clarifying requirements. Wait for CONTEXT.md.",
   "gate_1_pending":           "HITL Gate 1: Present locked decisions to user for approval.",
@@ -42,6 +44,10 @@ const PHASE_CONTINUATIONS = {
   "phase_6_execution":        "Continue Phase 6: Workers are implementing beads. Check ls(status='ready') for next bead.",
   "phase_7_review":           "Continue Phase 7: Reviewer is verifying bead implementation.",
   "phase_8_summary":          "Continue Phase 8: Generate final summary, write WRAP-UP.md, update learnings.",
+  // Mr.Fast phases (lightweight workflow)
+  "fast_bootstrap":           "Continue Mr.Fast: Spawn Fast Scout for rapid analysis.",
+  "fast_scout":               "Continue Mr.Fast: Scout is analyzing the issue. Wait for analysis summary.",
+  "fast_execution":           "Continue Mr.Fast: Executor is implementing the fix. Wait for completion.",
 };
 
 // --- Helpers ---
@@ -184,11 +190,14 @@ async function main() {
 
   const continuation = PHASE_CONTINUATIONS[phase] || `Continue working on phase: ${phase}.`;
   const feature = state.feature_slug ? ` Feature: ${state.feature_slug}.` : "";
+  const mode = state.mode || "mr.beads";
+  const modeLabel = mode === "mr.fast" ? "Mr.Fast" : "Oh-My-Beads (Mr.Beads)";
+  const workflowDesc = mode === "mr.fast" ? "The Mr.Fast workflow is active." : "The 8-step workflow is active.";
 
   blockStop(
-    `[OH-MY-BEADS — Phase: ${phase} | Reinforcement ${count}/${MAX_REINFORCEMENTS}] ` +
-    `The 8-step workflow is active.${feature} ${continuation} ` +
-    `Do NOT stop until all 8 phases complete. ` +
+    `[${modeLabel.toUpperCase()} — Phase: ${phase} | Reinforcement ${count}/${MAX_REINFORCEMENTS}] ` +
+    `${workflowDesc}${feature} ${continuation} ` +
+    `Do NOT stop until all phases complete. ` +
     `When finished, set session.json active=false or say "cancel omb".`
   );
 }

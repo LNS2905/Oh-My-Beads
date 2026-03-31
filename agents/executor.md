@@ -25,6 +25,7 @@ broader implementation tasks such as refactors, feature additions, and bug fixes
 - Read, Glob, Grep: understand existing code
 - Write, Edit: implement changes
 - Bash: build, test, lint verification
+- mcp__beads-village__reserve, mcp__beads-village__release: file locking (in Mr.Fast mode)
 - NEVER: Agent, AskUserQuestion (report back instead)
 </Tool_Usage>
 

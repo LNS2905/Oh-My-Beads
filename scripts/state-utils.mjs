@@ -93,8 +93,8 @@ export class StateManager {
     return this.readJson("session.json");
   }
 
-  writeSession(data) {
-    data.last_checked_at = new Date().toISOString();
+  writeSession(inputData) {
+    const data = { ...inputData, last_checked_at: new Date().toISOString() };
     // Always write to both legacy and session-scoped for compatibility
     this.writeJson("session.json", data);
     if (this.sessionDir) {

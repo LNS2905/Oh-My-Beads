@@ -9,9 +9,10 @@
  * Role matrix:
  * | Agent            | NEVER use                                            |
  * |------------------|------------------------------------------------------|
- * | Master           | Write, Edit (no implementation code)                 |
- * | Scout            | Write, Edit, reserve, claim, done, Agent             |
- * | Architect        | Write, Edit, reserve, claim, done                    |
+ * | Master           | Edit (Write restricted to .oh-my-beads/ paths)       |
+ * | Scout            | Edit, reserve, claim, done, Agent (Write→CONTEXT.md) |
+ * | Fast Scout       | Write, Edit, reserve, claim, done, Agent             |
+ * | Architect        | Edit, reserve, claim, done (Write→plans/ only)       |
  * | Worker           | ls, assign, graph, done, Agent, AskUserQuestion      |
  * | Reviewer         | Write, Edit, reserve, release, claim, done, Agent    |
  * | Explorer         | Write, Edit, Agent                                   |
@@ -34,16 +35,19 @@ const BV = (name) => `mcp__beads-village__${name}`;
 
 const ROLE_RESTRICTIONS = {
   master: {
-    deny: ["Write", "Edit"],
+    deny: ["Edit"],
     msg: "Master must not write implementation code.",
+    fileRestriction: /(?:^|[/\\])\.oh-my-beads[/\\]/,
   },
   scout: {
-    deny: ["Write", "Edit", BV("reserve"), BV("claim"), BV("done"), "Agent"],
-    msg: "Scout is read-only and does not use beads_village execution tools.",
+    deny: ["Edit", BV("reserve"), BV("claim"), BV("done"), "Agent"],
+    msg: "Scout is read-only except for CONTEXT.md output.",
+    fileRestriction: /CONTEXT\.md$/,
   },
   architect: {
-    deny: ["Write", "Edit", BV("reserve"), BV("claim"), BV("done")],
-    msg: "Architect does not write code or claim beads.",
+    deny: ["Edit", BV("reserve"), BV("claim"), BV("done")],
+    msg: "Architect does not write code, only plans.",
+    fileRestriction: /(?:^|[/\\])\.oh-my-beads[/\\]plans?[/\\]/,
   },
   worker: {
     deny: [BV("ls"), BV("assign"), BV("graph"), BV("done"), "Agent", "AskUserQuestion"],
@@ -73,12 +77,16 @@ const ROLE_RESTRICTIONS = {
     deny: ["Write", "Edit", "Agent"],
     msg: "Security Reviewer is read-only.",
   },
+  "fast-scout": {
+    deny: ["Write", "Edit", BV("reserve"), BV("claim"), BV("done"), "Agent"],
+    msg: "Fast Scout is read-only and does not use beads_village execution tools.",
+  },
   "test-engineer": {
     deny: ["Agent"],
     msg: "Test Engineer must not spawn sub-agents.",
     // Note: test-engineer CAN use Write/Edit, but only on test files.
     // The fileRestriction is checked separately below.
-    fileRestriction: /\.(test|spec)\.[^/]+$|^test\//,
+    fileRestriction: /\.(test|spec)\.[^/]+$|(?:^|[/\\])(?:tests?|__tests__)[/\\]/,
   },
 };
 
@@ -86,6 +94,9 @@ const ROLE_RESTRICTIONS = {
 const BASH_BLOCKLIST = [
   { pattern: /rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?\/\s*$/,   reason: "Refusing rm on root filesystem" },
   { pattern: /rm\s+-rf\s+\/(?!\S)/,                        reason: "Refusing rm -rf /" },
+  { pattern: /rm\s+(-[a-zA-Z]*[rf][a-zA-Z]*\s+)*\/\*/,    reason: "Refusing rm on root glob" },
+  { pattern: /--no-preserve-root/,                          reason: "Refusing --no-preserve-root" },
+  { pattern: /find\s+\/\s+.*-delete/,                       reason: "Refusing find / -delete" },
   { pattern: /mkfs\b/,                                     reason: "Refusing filesystem format" },
   { pattern: /dd\s+.*of=\/dev\//,                          reason: "Refusing dd to device" },
   { pattern: /:(){ :|:& };:/,                              reason: "Refusing fork bomb" },
@@ -136,18 +147,35 @@ function extractFilePath(data) {
 }
 
 function hookOutput(decision, reason) {
-  const output = {
-    continue: true,
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      ...(decision === "block"
-        ? { additionalContext: `BLOCKED: ${reason}` }
-        : decision === "warn"
-          ? { additionalContext: `WARNING: ${reason}` }
-          : {}),
-    },
-  };
-  process.stdout.write(JSON.stringify(output));
+  if (decision === "block") {
+    // Use Claude Code's native engine-level blocking (PreToolUse decision: 'block')
+    // This PREVENTS tool execution at the engine level, not just advisory text.
+    const output = {
+      continue: true,
+      decision: "block",
+      reason: `[oh-my-beads] ${reason}`,
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        additionalContext: `BLOCKED: ${reason}`,
+      },
+    };
+    process.stdout.write(JSON.stringify(output));
+  } else if (decision === "warn") {
+    const output = {
+      continue: true,
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        additionalContext: `WARNING: ${reason}`,
+      },
+    };
+    process.stdout.write(JSON.stringify(output));
+  } else {
+    const output = {
+      continue: true,
+      hookSpecificOutput: { hookEventName: "PreToolUse" },
+    };
+    process.stdout.write(JSON.stringify(output));
+  }
 }
 
 // --- Main ---
@@ -198,18 +226,18 @@ process.stdin.on("end", () => {
   }
 
   // Check tool deny list
-  const blocked = restrictions.deny.find((t) => toolName === t || toolName.startsWith(t));
+  const blocked = restrictions.deny.find((t) => toolName === t);
   if (blocked) {
     hookOutput("block", `${restrictions.msg} Tool '${toolName}' is not allowed for ${role} role.`);
     return;
   }
 
-  // Check file restriction for test-engineer
+  // Check file restriction (test-engineer, master, scout, architect)
   if (restrictions.fileRestriction && (toolName === "Write" || toolName === "Edit")) {
     const filePath = extractFilePath(data);
     if (filePath && !restrictions.fileRestriction.test(filePath)) {
       hookOutput("block",
-        `${role} can only modify test files (*.test.*, *.spec.*, test/*). ` +
+        `${role} can only modify allowed files matching its fileRestriction. ` +
         `Attempted: ${filePath}`
       );
       return;

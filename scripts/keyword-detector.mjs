@@ -13,7 +13,13 @@ import { join } from "path";
 
 // --- Config ---
 const KEYWORDS = [
+  // Cancel patterns (check first — order matters)
+  { pattern: /\b(?:cancel\s*mr\.?fast|stop\s*mr\.?fast)\b/i, action: "cancel" },
+  { pattern: /\b(?:cancel\s*mr\.?beads|stop\s*mr\.?beads)\b/i, action: "cancel" },
   { pattern: /\b(?:cancel\s*omb|stop\s*omb|cancel\s*oh-my-beads)\b/i, action: "cancel" },
+  // Invoke patterns (mr.fast before omb to avoid omb catching everything)
+  { pattern: /\b(?:mr\.?\s*fast|mrfast)\b/i, action: "invoke-fast" },
+  { pattern: /\b(?:mr\.?\s*beads|mrbeads)\b/i, action: "invoke" },
   { pattern: /\b(?:oh-my-beads|omb)\b/i, action: "invoke" },
 ];
 
@@ -40,7 +46,8 @@ function sanitize(text) {
 }
 
 function isInformational(text, keyword) {
-  const around = new RegExp(`(?:what|how|why|explain|describe|tell me about)\\s+(?:is|does|are)?\\s*${keyword}`, "i");
+  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const around = new RegExp(`(?:what|how|why|explain|describe|tell me about)\\s+(?:is|does|are)?\\s*${escaped}`, "i");
   return around.test(text);
 }
 
@@ -59,11 +66,12 @@ function ensureStateDir() {
   mkdirSync(STATE_DIR, { recursive: true });
 }
 
-function writeSessionState(phase) {
+function writeSessionState(phase, mode = "mr.beads") {
   ensureStateDir();
   const state = {
     current_phase: phase,
     active: true,
+    mode,
     started_at: new Date().toISOString(),
     reinforcement_count: 0,
   };
@@ -96,8 +104,9 @@ process.stdin.on("end", () => {
   for (const kw of KEYWORDS) {
     if (!kw.pattern.test(clean)) continue;
 
-    // Skip informational context ("what is omb?")
-    if (kw.action === "invoke" && (isInformational(clean, "omb") || isInformational(clean, "oh-my-beads"))) continue;
+    // Skip informational context ("what is omb?", "what is mr.fast?")
+    if (kw.action === "invoke" && (isInformational(clean, "omb") || isInformational(clean, "oh-my-beads") || isInformational(clean, "mr.beads") || isInformational(clean, "mrbeads"))) continue;
+    if (kw.action === "invoke-fast" && (isInformational(clean, "mr.fast") || isInformational(clean, "mrfast"))) continue;
 
     if (kw.action === "cancel") {
       clearSessionState();
@@ -105,8 +114,16 @@ process.stdin.on("end", () => {
       return;
     }
 
-    // Activate
-    writeSessionState("bootstrap");
+    if (kw.action === "invoke-fast") {
+      writeSessionState("fast_bootstrap", "mr.fast");
+      hookOutput(
+        `[MAGIC KEYWORD: mr-fast]\n\nYou MUST invoke the skill using the Skill tool:\n\nSkill: oh-my-beads:mr-fast\n\nUser request:\n${raw}\n\nIMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`
+      );
+      return;
+    }
+
+    // Activate Mr.Beads (default mode)
+    writeSessionState("bootstrap", "mr.beads");
     hookOutput(
       `[MAGIC KEYWORD: oh-my-beads]\n\nYou MUST invoke the skill using the Skill tool:\n\nSkill: oh-my-beads:using-oh-my-beads\n\nUser request:\n${raw}\n\nIMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`
     );

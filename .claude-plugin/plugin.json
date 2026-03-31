@@ -1,6 +1,6 @@
 {
   "name": "oh-my-beads",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Multi-agent orchestration plugin for Claude Code. Combines role-based specialization (Scout, Architect, Worker, Reviewer) under a Master Orchestrator, using beads_village for task tracking and concurrency safety.",
   "author": {
     "name": "sangnhat",
@@ -11,5 +11,6 @@
   "license": "MIT",
   "keywords": ["claude-code", "plugin", "multi-agent", "orchestration", "beads-village", "task-management"],
   "skills": "./skills/",
+  "agents": "./agents/",
   "mcpServers": "./.mcp.json"
 }

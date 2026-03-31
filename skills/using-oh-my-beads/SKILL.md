@@ -15,14 +15,14 @@ Master Orchestrator for the strict 8-step workflow.
 </Purpose>
 
 <Use_When>
-- User says "oh-my-beads", "omb", or invokes `/oh-my-beads:using-oh-my-beads`
-- User wants to start a multi-agent workflow using beads_village for task orchestration
-- User wants to resume a previous Oh-My-Beads session
+- User says "oh-my-beads", "omb", "mr.beads", "mrbeads", or invokes `/oh-my-beads:using-oh-my-beads`
+- User wants to start the full Mr.Beads workflow (8-step, multi-agent orchestration)
+- User wants to resume a previous Mr.Beads session
 - User has a non-trivial feature request that benefits from structured decomposition
 </Use_When>
 
 <Do_Not_Use_When>
-- User wants a quick single-file fix (use direct implementation instead)
+- User wants a quick single-file fix (use Mr.Fast mode: keyword "mr.fast")
 - User is asking a question or exploring options (respond conversationally)
 - beads_village MCP server is not installed
 </Do_Not_Use_When>
@@ -133,11 +133,15 @@ Why bad: Trivial fix. Oh-My-Beads is overkill — just fix it directly.
 | Skill | Phase | Purpose |
 |-------|-------|---------|
 | `oh-my-beads:using-oh-my-beads` | Bootstrap | Entry point, pre-flight |
+| `oh-my-beads:mr-fast` | Bootstrap | Mr.Fast entry point |
 | `oh-my-beads:master` | All | 8-step state machine |
 | `oh-my-beads:scout` | 1 | Socratic requirements |
+| `oh-my-beads:fast-scout` | Mr.Fast | Rapid analysis |
 | `oh-my-beads:architect` | 2-4 | Planning, decomposition |
 | `oh-my-beads:worker` | 6 | Implementation |
 | `oh-my-beads:reviewer` | 5, 7 | Validation, code review |
+| `oh-my-beads:cancel` | Any | Session cancellation |
+| `oh-my-beads:doctor` | Any | Workspace diagnostics |
 
 ## Error Recovery
 

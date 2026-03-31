@@ -8,13 +8,13 @@ level: 4
 ---
 
 <Purpose>
-Cancel any active Oh-My-Beads workflow session. This is the safe shutdown mechanism
-that clears session.json (stopping persistent-mode from blocking), removes tracking
-state, and reports what was cleaned up.
+Cancel any active Oh-My-Beads workflow session (Mr.Beads or Mr.Fast). This is the safe
+shutdown mechanism that clears session.json (stopping persistent-mode from blocking),
+removes tracking state, and reports what was cleaned up.
 </Purpose>
 
 <Use_When>
-- User says "cancel omb", "stop omb", or "/oh-my-beads:cancel"
+- User says "cancel omb", "stop omb", "cancel mrfast", "cancel mr.beads", or "/oh-my-beads:cancel"
 - Workflow is stuck or user wants to abort
 - Session needs cleanup after an error
 </Use_When>
@@ -65,12 +65,13 @@ This releases any file locks held by the current session.
 Present a summary to the user:
 ```
 Oh-My-Beads session cancelled.
+- Mode: <mr.beads|mr.fast>
 - Phase at cancellation: <phase>
 - Feature: <slug>
 - Beads open: <count from ls(status="open") if available>
 - Files were released
 
-To resume, say "omb" to start a new session.
+To resume, say "omb" (Mr.Beads) or "mr.fast" (Mr.Fast) to start a new session.
 To clean up beads_village issues: mcp__beads-village__cleanup()
 ```
 

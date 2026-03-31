@@ -2,7 +2,7 @@
 name: worker
 description: Single-bead implementer — claims, reserves files, implements, self-verifies, reports. Isolated context.
 model: claude-sonnet-4-6
-level: 2
+level: 3
 ---
 
 <Agent_Prompt>

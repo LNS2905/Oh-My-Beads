@@ -7,7 +7,8 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/run.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/keyword-detector.mjs\"",
-            "timeout": 5
+            "timeout": 5,
+            "statusMessage": "Checking for oh-my-beads keywords..."
           }
         ]
       }
@@ -19,7 +20,8 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/run.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/session-start.mjs\"",
-            "timeout": 5
+            "timeout": 5,
+            "statusMessage": "Loading oh-my-beads..."
           }
         ]
       }
@@ -31,7 +33,8 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/run.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/pre-tool-enforcer.mjs\"",
-            "timeout": 3
+            "timeout": 3,
+            "statusMessage": "Checking tool permissions..."
           }
         ]
       }
@@ -43,7 +46,8 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/run.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/post-tool-verifier.mjs\"",
-            "timeout": 5
+            "timeout": 5,
+            "statusMessage": "Verifying tool output..."
           }
         ]
       }
@@ -55,7 +59,47 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/persistent-mode.cjs\"",
-            "timeout": 5
+            "timeout": 5,
+            "statusMessage": "Checking session state..."
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/run.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/pre-compact.mjs\"",
+            "timeout": 5,
+            "statusMessage": "Saving checkpoint..."
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/run.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/subagent-tracker.mjs\"",
+            "timeout": 3,
+            "statusMessage": "Tracking subagent..."
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/run.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/subagent-tracker.mjs\"",
+            "timeout": 5,
+            "statusMessage": "Checking subagent results..."
           }
         ]
       }

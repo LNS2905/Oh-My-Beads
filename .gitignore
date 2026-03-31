@@ -31,3 +31,7 @@ skills-ref/
 # Claude Code local config
 .claude/
 claude-code-main-ref/
+
+# Harness skills (installed per-environment, not part of source)
+.agents/
+.factory/

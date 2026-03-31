@@ -54,6 +54,23 @@ const EXPECTATIONS = {
     ],
   },
 
+  "fast-scout": {
+    checks: [
+      {
+        name: "Analysis summary delivered",
+        // Fast Scout communicates via return value to mr-fast skill.
+        // No file output expected — just check that it completed successfully.
+        check: (dir, _feature, agentId) => {
+          const trackingFile = join(dir, ".oh-my-beads", "state", "subagent-tracking.json");
+          const tracking = safeReadJson(trackingFile);
+          if (!tracking?.agents) return true; // No tracking = assume OK
+          const agent = tracking.agents.find(a => a.id === agentId);
+          return !agent || (agent.status === "stopped" && (agent.exit_code ?? 0) === 0);
+        },
+      },
+    ],
+  },
+
   architect: {
     checks: [
       {

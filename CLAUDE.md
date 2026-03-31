@@ -5,20 +5,26 @@
 
 ## Project Overview
 
-Oh-My-Beads (OMB) is a Claude Code plugin providing an autonomous 8-step
-development workflow with specialized agents coordinated by a Master Orchestrator.
-It uses **beads_village** MCP for task tracking, dependency management, and file locking.
+Oh-My-Beads (OMB) is a Claude Code plugin with two execution modes:
+- **Mr.Beads** — autonomous 8-step workflow with 3 HITL gates for complex features
+- **Mr.Fast** — lightweight 2-step workflow (Scout → Executor) for quick fixes
 
-**Agents**: Master, Scout, Architect, Worker, Reviewer, Explorer, Executor,
+Both modes use **beads_village** MCP for task tracking, dependency management, and file locking.
+
+**Agents**: Master, Scout, Fast Scout, Architect, Worker, Reviewer, Explorer, Executor,
 Verifier, Code Reviewer, Security Reviewer, Test Engineer.
 
-**Skills**: using-oh-my-beads (bootstrap), master, scout, architect, worker,
-reviewer, cancel, doctor.
+**Skills**: using-oh-my-beads (Mr.Beads bootstrap), mr-fast (Mr.Fast bootstrap),
+master, scout, fast-scout, architect, worker, reviewer, cancel, doctor.
 
 ## Architecture
 
 ```
-User → keyword-detector (hook) → bootstrap skill → Master skill
+User → keyword-detector (hook) → mode routing:
+  "omb"/"mr.beads" → Mr.Beads bootstrap → Master skill (8-step)
+  "mr.fast"        → Mr.Fast bootstrap → Fast Scout → Executor
+
+Mr.Beads:
   Master → Scout (Phase 1) → HITL Gate 1
          → Architect (Phase 2) → HITL Gate 2
          → Plan persistence (Phase 3)
@@ -26,17 +32,20 @@ User → keyword-detector (hook) → bootstrap skill → Master skill
          → Reviewer validation (Phase 5) → HITL Gate 3
          → Worker execution + Reviewer review loop (Phase 6-7)
          → Final summary (Phase 8)
+
+Mr.Fast:
+  Fast Scout (0-2 questions) → Executor (reserve → implement → verify → release)
 ```
 
 ### Key Directories
 
 - `scripts/` — Hook scripts (Node.js, `.mjs`/`.cjs`)
 - `scripts/state-tools/` — State bridge CLI
-- `agents/` — Agent role definitions (11 agents)
-- `skills/` — Skill definitions (8 skills)
+- `agents/` — Agent role definitions (12 agents)
+- `skills/` — Skill definitions (10 skills)
 - `hooks/` — Hook configuration (`hooks.json`)
 - `.oh-my-beads/state/` — Runtime session state (not committed)
-- `test/` — Test harness (62 tests)
+- `test/` — Test harness (94 tests)
 
 ### State Model
 
@@ -45,6 +54,7 @@ Session state lives in `.oh-my-beads/state/session.json`:
 ```json
 {
   "active": true,
+  "mode": "mr.beads",
   "current_phase": "phase_2_planning",
   "started_at": "2025-01-01T00:00:00.000Z",
   "last_checked_at": "2025-01-01T00:01:00.000Z",
@@ -55,6 +65,7 @@ Session state lives in `.oh-my-beads/state/session.json`:
 ```
 
 **Canonical field names** (use these, not alternatives):
+- `mode` ("mr.beads" | "mr.fast", defaults to "mr.beads" if absent)
 - `current_phase` (not `phase`)
 - `started_at` (not `startedAt`)
 - `cancelled_at` (not `cancelledAt`)
@@ -87,11 +98,14 @@ node scripts/state-tools/state-bridge.cjs status [--session-id ID]
 
 | Hook | Script | Timeout | Purpose |
 |------|--------|---------|---------|
-| UserPromptSubmit | keyword-detector.mjs | 5s | Detect "omb"/"oh-my-beads", trigger skill |
-| SessionStart | session-start.mjs | 5s | Banner, resume detection |
-| PreToolUse | pre-tool-enforcer.mjs | 3s | Role-based tool access + Bash safety |
+| UserPromptSubmit | keyword-detector.mjs | 5s | Detect "omb"/"mr.fast"/"mr.beads", route to mode |
+| SessionStart | session-start.mjs | 5s | Banner, resume detection, post-compaction auto-resume |
+| PreToolUse | pre-tool-enforcer.mjs | 3s | Role-based tool access (engine-level blocking) + Bash safety |
 | PostToolUse | post-tool-verifier.mjs | 5s | Failure detection, file tracking |
 | Stop | persistent-mode.cjs | 5s | Block premature stops, write checkpoints |
+| PreCompact | pre-compact.mjs | 5s | Save checkpoint + handoff before compaction |
+| SubagentStart | subagent-tracker.mjs | 3s | Track subagent lifecycle (role, start time) |
+| SubagentStop | subagent-tracker.mjs | 5s | Verify deliverables, update tracking state |
 
 ### Safety Mechanisms
 
@@ -112,13 +126,14 @@ node scripts/state-tools/state-bridge.cjs status [--session-id ID]
 
 | Agent | Write | Edit | Agent | beads_village mutations | Notes |
 |-------|-------|------|-------|------------------------|-------|
-| Master | NO | NO | YES | init/ls/show/done/assign | Never writes code |
-| Scout | NO | NO | NO | none | Read-only exploration |
-| Architect | NO | NO | NO | add (via Master) | Plans only |
-| Worker | YES | YES | NO | claim/reserve/release/msg | Single bead |
+| Master | .oh-my-beads/ only | NO | YES | init/ls/show/done/assign/graph/bv_plan/bv_insights/reservations/doctor/msg/inbox | Never writes code |
+| Scout | CONTEXT.md only | NO | NO | none | Read-only exploration (Mr.Beads) |
+| Fast Scout | NO | NO | NO | none | Read-only rapid analysis (Mr.Fast) |
+| Architect | plans/ only | NO | NO | add (via Master) | Plans only |
+| Worker | YES | YES | NO | init/claim/show/reserve/release/msg | Single bead |
 | Reviewer | NO | NO | NO | ls/show/msg | Read-only quality |
 | Explorer | NO | NO | NO | none | Fast search |
-| Executor | YES | YES | NO | none | General impl |
+| Executor | YES | YES | NO | reserve/release | General impl |
 | Verifier | NO | NO | NO | none | Independent checks |
 | Code Reviewer | NO | NO | NO | none | Deep review (Opus) |
 | Security Reviewer | NO | NO | NO | none | Security audit |
@@ -138,7 +153,7 @@ node scripts/state-tools/state-bridge.cjs status [--session-id ID]
 
 Run tests: `node test/run-tests.mjs`
 
-62 tests across 7 suites covering:
+94 tests across 13 suites covering:
 - keyword-detector (8 tests): keyword detection, informational filtering, cancel
 - persistent-mode (14 tests): block/allow, circuit breaker, staleness, checkpoint
 - post-tool-verifier (8 tests): failure detection, file tracking, counters
@@ -147,6 +162,12 @@ Run tests: `node test/run-tests.mjs`
 - verify-deliverables (5 tests): scout/architect/worker/unknown role checks
 - subagent-tracker (2 tests): start/stop lifecycle
 - pre-compact (3 tests): checkpoint writing, handoff creation
+- session-start post-compaction (4 tests): auto-resume from checkpoint, handoff loading, startup modes
+- keyword-detector Mr.Fast (8 tests): mr.fast/mrfast detection, mr.beads, cancel, session state
+- persistent-mode Mr.Fast (3 tests): fast_scout/fast_execution/fast_complete phase handling
+- pre-tool-enforcer Mr.Fast (3 tests): fast-scout role restrictions
+- verify-deliverables Mr.Fast (1 test): fast-scout verification without CONTEXT.md
+- pre-tool-enforcer Audit (13 tests): file restrictions, Bash blocklist expansions, over-blocking prevention
 
 ### Adding a New Agent
 
@@ -182,7 +203,7 @@ Run tests: `node test/run-tests.mjs`
 ## Commands
 
 ```bash
-# Run tests (62 tests, all must pass)
+# Run tests (94 tests, all must pass)
 node test/run-tests.mjs
 
 # Manual keyword test
@@ -206,3 +227,105 @@ cat .oh-my-beads/state/session.json
 
 - **Runtime**: Node.js 18+, beads_village MCP server
 - **No npm dependencies** — all scripts are zero-dependency Node.js
+
+<!-- gitnexus:start -->
+# GitNexus — Code Intelligence
+
+This project is indexed by GitNexus as **OhMyBeads** (15858 symbols, 48696 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+
+> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+
+## Always Do
+
+- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `gitnexus_impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
+- **MUST run `gitnexus_detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows.
+- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
+- When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
+- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
+
+## When Debugging
+
+1. `gitnexus_query({query: "<error or symptom>"})` — find execution flows related to the issue
+2. `gitnexus_context({name: "<suspect function>"})` — see all callers, callees, and process participation
+3. `READ gitnexus://repo/OhMyBeads/process/{processName}` — trace the full execution flow step by step
+4. For regressions: `gitnexus_detect_changes({scope: "compare", base_ref: "main"})` — see what your branch changed
+
+## When Refactoring
+
+- **Renaming**: MUST use `gitnexus_rename({symbol_name: "old", new_name: "new", dry_run: true})` first. Review the preview — graph edits are safe, text_search edits need manual review. Then run with `dry_run: false`.
+- **Extracting/Splitting**: MUST run `gitnexus_context({name: "target"})` to see all incoming/outgoing refs, then `gitnexus_impact({target: "target", direction: "upstream"})` to find all external callers before moving code.
+- After any refactor: run `gitnexus_detect_changes({scope: "all"})` to verify only expected files changed.
+
+## Never Do
+
+- NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
+- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
+- NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
+- NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
+
+## Tools Quick Reference
+
+| Tool | When to use | Command |
+|------|-------------|---------|
+| `query` | Find code by concept | `gitnexus_query({query: "auth validation"})` |
+| `context` | 360-degree view of one symbol | `gitnexus_context({name: "validateUser"})` |
+| `impact` | Blast radius before editing | `gitnexus_impact({target: "X", direction: "upstream"})` |
+| `detect_changes` | Pre-commit scope check | `gitnexus_detect_changes({scope: "staged"})` |
+| `rename` | Safe multi-file rename | `gitnexus_rename({symbol_name: "old", new_name: "new", dry_run: true})` |
+| `cypher` | Custom graph queries | `gitnexus_cypher({query: "MATCH ..."})` |
+
+## Impact Risk Levels
+
+| Depth | Meaning | Action |
+|-------|---------|--------|
+| d=1 | WILL BREAK — direct callers/importers | MUST update these |
+| d=2 | LIKELY AFFECTED — indirect deps | Should test |
+| d=3 | MAY NEED TESTING — transitive | Test if critical path |
+
+## Resources
+
+| Resource | Use for |
+|----------|---------|
+| `gitnexus://repo/OhMyBeads/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/OhMyBeads/clusters` | All functional areas |
+| `gitnexus://repo/OhMyBeads/processes` | All execution flows |
+| `gitnexus://repo/OhMyBeads/process/{name}` | Step-by-step execution trace |
+
+## Self-Check Before Finishing
+
+Before completing any code modification task, verify:
+1. `gitnexus_impact` was run for all modified symbols
+2. No HIGH/CRITICAL risk warnings were ignored
+3. `gitnexus_detect_changes()` confirms changes match expected scope
+4. All d=1 (WILL BREAK) dependents were updated
+
+## Keeping the Index Fresh
+
+After committing code changes, the GitNexus index becomes stale. Re-run analyze to update it:
+
+```bash
+npx gitnexus analyze
+```
+
+If the index previously included embeddings, preserve them by adding `--embeddings`:
+
+```bash
+npx gitnexus analyze --embeddings
+```
+
+To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.embeddings` field shows the count (0 means no embeddings). **Running analyze without `--embeddings` will delete any previously generated embeddings.**
+
+> Claude Code users: A PostToolUse hook handles this automatically after `git commit` and `git merge`.
+
+## CLI
+
+| Task | Read this skill file |
+|------|---------------------|
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
+| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
+| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
+| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
+| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+
+<!-- gitnexus:end -->

@@ -15,7 +15,7 @@ Both modes use **beads_village** MCP for task tracking, dependency management, a
 Verifier, Code Reviewer, Security Reviewer, Test Engineer.
 
 **Skills**: using-oh-my-beads (Mr.Beads bootstrap), mr-fast (Mr.Fast bootstrap),
-master, scout, fast-scout, architect, worker, reviewer, cancel, doctor.
+master, scout, fast-scout, architect, worker, reviewer, compounding, prompt-leverage, cancel, doctor.
 
 ## Architecture
 
@@ -40,12 +40,12 @@ Mr.Fast:
 ### Key Directories
 
 - `scripts/` — Hook scripts (Node.js, `.mjs`/`.cjs`)
-- `scripts/state-tools/` — State bridge CLI
+- `scripts/state-tools/` — State bridge CLI + shared state resolver (`resolve-state-dir.mjs`)
 - `agents/` — Agent role definitions (12 agents)
-- `skills/` — Skill definitions (10 skills)
+- `skills/` — Skill definitions (12 skills, including compounding + prompt-leverage)
 - `hooks/` — Hook configuration (`hooks.json`)
 - `.oh-my-beads/state/` — Runtime session state (not committed)
-- `test/` — Test harness (94 tests)
+- `test/` — Test harness (136 tests)
 
 ### State Model
 
@@ -60,7 +60,8 @@ Session state lives in `.oh-my-beads/state/session.json`:
   "last_checked_at": "2025-01-01T00:01:00.000Z",
   "reinforcement_count": 3,
   "feature_slug": "rest-api",
-  "failure_count": 0
+  "failure_count": 0,
+  "revision_count": 0
 }
 ```
 
@@ -71,11 +72,14 @@ Session state lives in `.oh-my-beads/state/session.json`:
 - `cancelled_at` (not `cancelledAt`)
 - `last_checked_at` (not `lastCheckedAt`)
 - `reinforcement_count` (not `reinforcementCount`)
+- `revision_count` (Phase 2 revision tracking, max 3, not `revisionCount`)
 
 Additional state files:
 - `tool-tracking.json` — files modified, failures detected by PostToolUse hook
 - `subagent-tracking.json` — spawned subagent lifecycle (role, start/stop, status)
 - `checkpoint.json` — pre-compaction checkpoint for context recovery
+- `last-tool-error.json` — last tool failure, retry count, escalation state (PostToolUseFailure hook)
+- `cancel-signal.json` — cancel signal with 30s TTL (prevents TOCTOU race on cancel)
 
 ### Session-Scoped State
 
@@ -84,6 +88,10 @@ State supports session-scoped paths for multi-session isolation:
 .oh-my-beads/state/session.json                        (legacy, primary)
 .oh-my-beads/state/sessions/{sessionId}/session.json    (session-scoped)
 ```
+
+All hooks use `resolveStateDir(baseDir, data)` from `scripts/state-tools/resolve-state-dir.mjs` (ESM)
+or inline equivalent (CJS) to resolve the correct path. Session ID is read from `data.session_id`,
+`data.sessionId`, or `CLAUDE_SESSION_ID` env var. Falls back to legacy path when unavailable.
 
 Use the state bridge CLI for uniform access:
 ```bash
@@ -102,16 +110,20 @@ node scripts/state-tools/state-bridge.cjs status [--session-id ID]
 | SessionStart | session-start.mjs | 5s | Banner, resume detection, post-compaction auto-resume |
 | PreToolUse | pre-tool-enforcer.mjs | 3s | Role-based tool access (engine-level blocking) + Bash safety |
 | PostToolUse | post-tool-verifier.mjs | 5s | Failure detection, file tracking |
+| PostToolUseFailure | post-tool-use-failure.mjs | 3s | Track tool failures, retry counts, escalation at 5 retries |
+| Stop | context-guard-stop.mjs | 3s | Detect context pressure, allow context-limit stops through |
 | Stop | persistent-mode.cjs | 5s | Block premature stops, write checkpoints |
 | PreCompact | pre-compact.mjs | 5s | Save checkpoint + handoff before compaction |
 | SubagentStart | subagent-tracker.mjs | 3s | Track subagent lifecycle (role, start time) |
-| SubagentStop | subagent-tracker.mjs | 5s | Verify deliverables, update tracking state |
+| SubagentStop | subagent-tracker.mjs, verify-deliverables.mjs | 5s | Verify deliverables, update tracking state |
+| SessionEnd | session-end.mjs | 30s | Clean up state, mark stale sessions, clear transient files |
 
 ### Safety Mechanisms
 
 | Mechanism | Implementation | Trigger |
 |-----------|---------------|---------|
 | **Stop blocking** | persistent-mode.cjs | Claude tries to stop during active phase |
+| **Context guard** | context-guard-stop.mjs | Context pressure detected (>85%) → allow stop + checkpoint |
 | **Circuit breaker** | 50 max reinforcements | Runaway blocking |
 | **Staleness timeout** | 2-hour threshold | Abandoned sessions |
 | **Context limit bypass** | isContextLimitStop() | Token exhaustion |
@@ -121,6 +133,15 @@ node scripts/state-tools/state-bridge.cjs status [--session-id ID]
 | **Bash blocklist** | BASH_BLOCKLIST[] | rm -rf /, DROP DATABASE, etc. |
 | **File tracking** | post-tool-verifier.mjs | Worker modifies files |
 | **Failure detection** | FAILURE_KEYWORDS[] | Build/test/compile errors |
+| **Tool failure tracking** | post-tool-use-failure.mjs | Tool errors with retry window (60s) and escalation at 5 |
+| **Session cleanup** | session-end.mjs | Session close → deactivate non-critical, clear transient state |
+| **Cancel signal TTL** | cancel-signal.json (30s) | Prevents TOCTOU race between cancel and next stop hook |
+| **Awaiting confirmation** | awaiting_confirmation flag | Skip blocking until skill initializes |
+| **Informational filter** | ±80 char context window | Prevents false triggers on "what is omb?" queries |
+| **SystemMessage re-inject** | pre-compact.mjs systemMessage | Session context survives compaction |
+| **Worker guard** | OMB_AGENT_ROLE / OMB_TEAM_WORKER env check | Prevents subagent keyword re-triggers (spawn loops) |
+| **Output clipping** | MAX_OUTPUT_CHARS (12k default) | Limits large tool outputs, annotates truncation |
+| **Session-scoped state** | resolveStateDir() helper | Multi-session isolation via sessions/{id}/ paths |
 
 ### Agent Role Matrix
 
@@ -128,7 +149,7 @@ node scripts/state-tools/state-bridge.cjs status [--session-id ID]
 |-------|-------|------|-------|------------------------|-------|
 | Master | .oh-my-beads/ only | NO | YES | init/ls/show/done/assign/graph/bv_plan/bv_insights/reservations/doctor/msg/inbox | Never writes code |
 | Scout | CONTEXT.md only | NO | NO | none | Read-only exploration (Mr.Beads) |
-| Fast Scout | NO | NO | NO | none | Read-only rapid analysis (Mr.Fast) |
+| Fast Scout | BRIEF.md only | NO | NO | none | Rapid analysis, writes BRIEF.md (Mr.Fast) |
 | Architect | plans/ only | NO | NO | add (via Master) | Plans only |
 | Worker | YES | YES | NO | init/claim/show/reserve/release/msg | Single bead |
 | Reviewer | NO | NO | NO | ls/show/msg | Read-only quality |
@@ -153,21 +174,29 @@ node scripts/state-tools/state-bridge.cjs status [--session-id ID]
 
 Run tests: `node test/run-tests.mjs`
 
-94 tests across 13 suites covering:
-- keyword-detector (8 tests): keyword detection, informational filtering, cancel
-- persistent-mode (14 tests): block/allow, circuit breaker, staleness, checkpoint
-- post-tool-verifier (8 tests): failure detection, file tracking, counters
+136 tests across 22 suites covering:
+- keyword-detector (10 tests): keyword detection, informational filtering (±80 char window), cancel with signal file, CC prompt field
+- persistent-mode (15 tests): block/allow, circuit breaker, staleness, CC-format stop hook, cancel signal TTL, awaiting_confirmation
+- post-tool-verifier (8 tests): failure detection (word-boundary patterns), file tracking, counters
 - pre-tool-enforcer (15 tests): all 11 roles, Bash safety, file restrictions
 - state-bridge (7 tests): CRUD operations, list, status
 - verify-deliverables (5 tests): scout/architect/worker/unknown role checks
 - subagent-tracker (2 tests): start/stop lifecycle
-- pre-compact (3 tests): checkpoint writing, handoff creation
+- pre-compact (4 tests): checkpoint writing, handoff creation, systemMessage re-injection
 - session-start post-compaction (4 tests): auto-resume from checkpoint, handoff loading, startup modes
 - keyword-detector Mr.Fast (8 tests): mr.fast/mrfast detection, mr.beads, cancel, session state
 - persistent-mode Mr.Fast (3 tests): fast_scout/fast_execution/fast_complete phase handling
 - pre-tool-enforcer Mr.Fast (3 tests): fast-scout role restrictions
 - verify-deliverables Mr.Fast (1 test): fast-scout verification without CONTEXT.md
 - pre-tool-enforcer Audit (13 tests): file restrictions, Bash blocklist expansions, over-blocking prevention
+- prompt-leverage unit (13 tests): task detection, intensity inference, framework blocks, mode capping
+- prompt-leverage integration (4 tests): keyword-detector augmented output for both modes
+- post-tool-use-failure (5 tests): retry tracking, escalation at threshold, tool change reset, graceful fallback
+- session-end (4 tests): deactivation, critical phase preservation, inactive passthrough, error cleanup
+- context-guard-stop (3 tests): inactive passthrough, normal stop passthrough, context pressure detection
+- keyword-detector Worker Guard (3 tests): OMB_AGENT_ROLE skip, OMB_TEAM_WORKER skip, normal detection
+- post-tool-verifier Output Clipping (3 tests): clipping >12k, passthrough <12k, env override
+- post-tool-verifier Session-Scoped State (2 tests): session_id scoped path, legacy fallback
 
 ### Adding a New Agent
 
@@ -203,7 +232,7 @@ Run tests: `node test/run-tests.mjs`
 ## Commands
 
 ```bash
-# Run tests (94 tests, all must pass)
+# Run tests (136 tests, all must pass)
 node test/run-tests.mjs
 
 # Manual keyword test

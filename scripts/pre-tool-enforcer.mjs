@@ -11,7 +11,7 @@
  * |------------------|------------------------------------------------------|
  * | Master           | Edit (Write restricted to .oh-my-beads/ paths)       |
  * | Scout            | Edit, reserve, claim, done, Agent (Write→CONTEXT.md) |
- * | Fast Scout       | Write, Edit, reserve, claim, done, Agent             |
+ * | Fast Scout       | Edit, reserve, claim, done, Agent (Write only BRIEF.md) |
  * | Architect        | Edit, reserve, claim, done (Write→plans/ only)       |
  * | Worker           | ls, assign, graph, done, Agent, AskUserQuestion      |
  * | Reviewer         | Write, Edit, reserve, release, claim, done, Agent    |
@@ -78,8 +78,10 @@ const ROLE_RESTRICTIONS = {
     msg: "Security Reviewer is read-only.",
   },
   "fast-scout": {
-    deny: ["Write", "Edit", BV("reserve"), BV("claim"), BV("done"), "Agent"],
-    msg: "Fast Scout is read-only and does not use beads_village execution tools.",
+    deny: ["Edit", BV("reserve"), BV("claim"), BV("done"), "Agent"],
+    msg: "Fast Scout can only Write BRIEF.md (analysis artifact). No Edit, no beads_village execution.",
+    // Fast Scout CAN use Write, but only for BRIEF.md
+    fileRestriction: /BRIEF\.md$/,
   },
   "test-engineer": {
     deny: ["Agent"],
@@ -148,14 +150,18 @@ function extractFilePath(data) {
 
 function hookOutput(decision, reason) {
   if (decision === "block") {
-    // Use Claude Code's native engine-level blocking (PreToolUse decision: 'block')
-    // This PREVENTS tool execution at the engine level, not just advisory text.
+    // Claude Code's PreToolUse engine uses hookSpecificOutput.permissionDecision
+    // to enforce tool blocking. 'deny' prevents the tool from executing.
+    // Top-level decision:'block' is a fallback for older versions.
+    // additionalContext kept so the model sees why it was blocked.
     const output = {
       continue: true,
       decision: "block",
       reason: `[oh-my-beads] ${reason}`,
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: `[oh-my-beads] ${reason}`,
         additionalContext: `BLOCKED: ${reason}`,
       },
     };

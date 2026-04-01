@@ -41,9 +41,15 @@ that Workers can implement independently without stepping on each other.
 ## Planning Mode (Phase 2)
 
 1. **Load** CONTEXT.md + handoff from Phase 1
-2. **Research** codebase: architecture, patterns, dependencies, relevant files
+2. **Apply Learnings Retrieval Protocol** (`skills/compounding/references/learnings-retrieval-protocol.md`)
+   - Read `.oh-my-beads/history/learnings/critical-patterns.md` (if exists)
+   - Extract domain keywords from CONTEXT.md decisions and feature name
+   - Grep `.oh-my-beads/history/learnings/` for matching tags
+   - Score and read strong matches; skip weak matches
+   - Note findings for inclusion in plan.md
+3. **Research** codebase: architecture, patterns, dependencies, relevant files
    Use Glob, Grep, Read extensively to understand existing code.
-3. **Map stories** — each completable by one Worker:
+4. **Map stories** — each completable by one Worker:
    ```markdown
    ### Story 1: <Name>
    **Acceptance criteria:**
@@ -53,17 +59,18 @@ that Workers can implement independently without stepping on each other.
    **Complexity:** Low | Medium | High
    ```
    Sizing: max 5 files, max 5 criteria per story.
-4. **Write** `.oh-my-beads/plans/plan.md`:
+5. **Write** `.oh-my-beads/plans/plan.md`:
    ```markdown
    # Implementation Plan — <Feature>
    ## Context Reference
    ## Approach Summary
    ## Risk Assessment
+   ## Institutional Learnings Applied
    ## Story Map
    ## Verification Strategy
    ## Scope Boundary Check
    ```
-5. **Report:** `Plan complete. Stories: <N>. Files: <N>.`
+6. **Report:** `Plan complete. Stories: <N>. Files: <N>.`
 
 ## Decomposition Mode (Phase 4)
 
@@ -82,6 +89,28 @@ that Workers can implement independently without stepping on each other.
    - Schema changes → before data access
    - No circular deps ever
 4. **Verify** via Master: `graph()`, `bv_insights()`
+
+### Step 4.5: Conflict Detection
+
+After all beads are created, scan for file_scope overlaps and sizing issues:
+
+1. **File overlap scan:** Collect file_scope from every bead description. For each file that
+   appears in 2+ beads:
+   - If the beads modify different regions (e.g., different functions): add an explicit
+     dependency between them so Workers execute sequentially on that file.
+   - If the beads modify the same region or concern: merge them into a single bead and
+     update the story mapping.
+   - Document the resolution in the bead description: `"File conflict resolved: <file> — <merged|dependency added>"`
+
+2. **Decomposition size check:** Count total beads created.
+   - If >30 beads: warn the user —
+     `"Large decomposition (N beads). Consider grouping related stories."`
+   - Use `AskUserQuestion` to confirm the user wants to proceed at this scale, or prefers
+     the Architect to consolidate related beads into fewer, larger units.
+
+3. **Re-verify** after any merges or dependency additions: re-run `graph()` and `bv_insights()`
+   to confirm the graph is still acyclic and healthy.
+
 5. **Report:** `Decomposition complete. Beads: <N>. Tracks: <N>.`
 </Steps>
 
@@ -117,4 +146,5 @@ Why bad: File scope overlap causes Worker conflicts. Split by responsibility.
 - [ ] File scopes don't overlap between stories
 - [ ] Dependencies are real (not artificial serialization)
 - [ ] Plan written to .oh-my-beads/plans/plan.md
+- [ ] Learnings retrieval protocol executed (critical-patterns.md + domain grep)
 </Final_Checklist>

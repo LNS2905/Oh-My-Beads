@@ -17,6 +17,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import { join, dirname } from "path";
+import { resolveStateDir } from "./state-tools/resolve-state-dir.mjs";
 
 // --- Atomic write helper ---
 function writeJsonAtomic(filePath, data) {
@@ -26,17 +27,19 @@ function writeJsonAtomic(filePath, data) {
 }
 
 // --- Constants ---
+const MAX_OUTPUT_CHARS = parseInt(process.env.OMB_MAX_OUTPUT_CHARS || "12000", 10);
+
 const FAILURE_KEYWORDS = [
-  /error TS\d+/i,            // TypeScript errors
-  /SyntaxError/,             // JS/TS syntax errors
-  /FAIL/,                    // Test runner FAIL
-  /npm ERR!/,                // npm errors
-  /Build failed/i,           // Generic build failure
-  /Cannot find module/i,     // Module resolution
-  /ENOENT/,                  // File not found
-  /Segmentation fault/i,     // Crash
-  /exit code [1-9]/i,        // Non-zero exit
-  /command failed/i,         // Generic command failure
+  /\berror TS\d+\b/i,           // TypeScript errors
+  /\bSyntaxError\b/,            // JS/TS syntax errors
+  /\bFAIL\b/,                   // Test runner FAIL
+  /\bnpm ERR!/,                 // npm errors
+  /\bBuild failed\b/i,          // Generic build failure
+  /\bCannot find module\b/i,    // Module resolution
+  /\bENOENT\b/,                 // File not found
+  /\bSegmentation fault\b/i,    // Crash
+  /\bexit code [1-9]\b/i,       // Non-zero exit
+  /\bcommand failed\b/i,        // Generic command failure
 ];
 
 const CODE_TOOLS = new Set(["Write", "Edit"]);
@@ -103,7 +106,7 @@ process.stdin.on("end", async () => {
   }
 
   const directory = data.cwd || data.directory || process.cwd();
-  const stateDir = join(directory, ".oh-my-beads", "state");
+  const { stateDir } = resolveStateDir(directory, data);
   const sessionFile = join(stateDir, "session.json");
   const trackingFile = join(stateDir, "tool-tracking.json");
 
@@ -116,7 +119,14 @@ process.stdin.on("end", async () => {
 
   const toolName = data.tool_name ?? data.toolName ?? "";
   const toolOutput = data.tool_output ?? data.toolOutput ?? data.output ?? "";
-  const toolResult = typeof toolOutput === "string" ? toolOutput : JSON.stringify(toolOutput);
+  let toolResult = typeof toolOutput === "string" ? toolOutput : JSON.stringify(toolOutput);
+
+  // Clip oversized output to reduce analysis surface
+  let clipped = false;
+  if (toolResult.length > MAX_OUTPUT_CHARS) {
+    toolResult = toolResult.substring(0, MAX_OUTPUT_CHARS) + "\n[TRUNCATED — output exceeded " + MAX_OUTPUT_CHARS + " chars]";
+    clipped = true;
+  }
 
   // Load or create tracking state
   let tracking = readJson(trackingFile) || {
@@ -181,6 +191,10 @@ process.stdin.on("end", async () => {
     return;
   }
 
-  // No issues — pass through silently
+  // No issues — pass through (with clipping annotation if needed)
+  if (clipped) {
+    hookOutput(`[oh-my-beads] Output clipped from ${(typeof toolOutput === "string" ? toolOutput : JSON.stringify(toolOutput)).length} to ${MAX_OUTPUT_CHARS} chars.`);
+    return;
+  }
   hookOutput(null);
 });

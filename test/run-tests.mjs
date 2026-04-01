@@ -38,7 +38,7 @@ function teardown() {
 
 function resetState() {
   const stateDir = join(TEMP_DIR, ".oh-my-beads", "state");
-  for (const f of ["session.json", "tool-tracking.json", "subagent-tracking.json", "checkpoint.json"]) {
+  for (const f of ["session.json", "tool-tracking.json", "subagent-tracking.json", "checkpoint.json", "last-tool-error.json", "cancel-signal.json"]) {
     rmSync(join(stateDir, f), { force: true });
   }
   // Clean handoffs
@@ -163,6 +163,13 @@ test("ignores 'how does oh-my-beads work'", () => {
   assert(!ctx || !ctx.includes("MAGIC KEYWORD"), "should not trigger on how-question");
 });
 
+test("ignores trailing question 'can I use omb?'", () => {
+  const { output } = runScript("keyword-detector.mjs", { query: "can I use omb?" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext;
+  assert(!ctx || !ctx.includes("MAGIC KEYWORD"), "should not trigger on question");
+});
+
 test("handles cancel omb", () => {
   writeState({ active: true, current_phase: "phase_2_planning", started_at: new Date().toISOString() });
   const { output } = runScript("keyword-detector.mjs", { query: "cancel omb" });
@@ -171,6 +178,12 @@ test("handles cancel omb", () => {
   const state = readState();
   assert(state.active === false, "session should be deactivated");
   assert(state.current_phase === "cancelled", "phase should be cancelled");
+  // Verify cancel signal file was written
+  const signalPath = join(TEMP_DIR, ".oh-my-beads", "state", "cancel-signal.json");
+  assert(existsSync(signalPath), "cancel-signal.json should exist");
+  const signal = JSON.parse(readFileSync(signalPath, "utf8"));
+  assert(signal.expires_at, "cancel signal should have expires_at");
+  assert(new Date(signal.expires_at).getTime() > Date.now(), "cancel signal should not be expired");
 });
 
 test("handles stop omb variant", () => {
@@ -196,6 +209,17 @@ test("writes session state on keyword detection", () => {
   assert(state.active === true, "should be active");
   assert(state.current_phase === "bootstrap", "phase should be bootstrap");
   assert(state.reinforcement_count === 0, "reinforcement_count should be 0");
+  assert(state.awaiting_confirmation === true, "awaiting_confirmation should be true");
+});
+
+test("works with real CC 'prompt' field name", () => {
+  resetState();
+  // Claude Code sends `prompt`, not `query`
+  const { output } = runScript("keyword-detector.mjs", { hook_event_name: "UserPromptSubmit", prompt: "omb build REST API" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "MAGIC KEYWORD: oh-my-beads", "prompt field");
+  const state = readState();
+  assert(state?.active === true, "should activate with prompt field");
 });
 
 // ---- PERSISTENT MODE ----
@@ -263,29 +287,21 @@ test("allows stop for 'cancelled' phase", () => {
   assert(!parsed?.decision || parsed.decision !== "block", "should allow stop for cancelled");
 });
 
-test("allows stop for context limit", () => {
-  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
-  const { output } = runScript("persistent-mode.cjs", { cwd: TEMP_DIR, stop_reason: "context_limit" });
+test("blocks stop with real CC stop hook format (stop_hook_active)", () => {
+  writeState({
+    active: true, current_phase: "phase_6_execution",
+    started_at: new Date().toISOString(),
+    last_checked_at: new Date().toISOString(),
+    reinforcement_count: 0,
+  });
+  // Real Claude Code Stop hook payload — only stop_hook_active + base fields
+  const { output } = runScript("persistent-mode.cjs", {
+    hook_event_name: "Stop",
+    stop_hook_active: true,
+    cwd: TEMP_DIR,
+  });
   const parsed = parseOutput(output);
-  assert(!parsed?.decision || parsed.decision !== "block", "should allow stop on context limit");
-});
-
-test("writes checkpoint on context limit", () => {
-  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString(), feature_slug: "test-feat" });
-  runScript("persistent-mode.cjs", { cwd: TEMP_DIR, stop_reason: "context_limit" });
-  const checkpoint = JSON.parse(readFileSync(join(TEMP_DIR, ".oh-my-beads", "state", "checkpoint.json"), "utf8"));
-  assert(checkpoint.reason === "context_limit", "checkpoint reason");
-  assert(checkpoint.phase === "phase_6_execution", "checkpoint phase");
-  // Check handoff was written
-  const handoffs = readdirSync(join(TEMP_DIR, ".oh-my-beads", "handoffs")).filter(f => f.startsWith("checkpoint-"));
-  assert(handoffs.length > 0, "handoff file should exist");
-});
-
-test("allows stop for user abort", () => {
-  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
-  const { output } = runScript("persistent-mode.cjs", { cwd: TEMP_DIR, user_requested: true });
-  const parsed = parseOutput(output);
-  assert(!parsed?.decision || parsed.decision !== "block", "should allow stop on user abort");
+  assert(parsed?.decision === "block", "should block stop with real CC payload");
 });
 
 test("allows stop when cancel_requested is set", () => {
@@ -293,6 +309,51 @@ test("allows stop when cancel_requested is set", () => {
   const { output } = runScript("persistent-mode.cjs", { cwd: TEMP_DIR });
   const parsed = parseOutput(output);
   assert(!parsed?.decision || parsed.decision !== "block", "should allow stop on cancel_requested");
+});
+
+test("allows stop when cancel-signal.json has valid TTL", () => {
+  writeState({
+    active: true, current_phase: "phase_6_execution",
+    started_at: new Date().toISOString(),
+    last_checked_at: new Date().toISOString(),
+    reinforcement_count: 0,
+  });
+  writeFileSync(
+    join(TEMP_DIR, ".oh-my-beads", "state", "cancel-signal.json"),
+    JSON.stringify({ cancelled_at: new Date().toISOString(), expires_at: new Date(Date.now() + 30_000).toISOString() })
+  );
+  const { output } = runScript("persistent-mode.cjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(!parsed?.decision || parsed.decision !== "block", "should allow stop with valid cancel signal");
+});
+
+test("blocks stop when cancel-signal.json is expired", () => {
+  writeState({
+    active: true, current_phase: "phase_6_execution",
+    started_at: new Date().toISOString(),
+    last_checked_at: new Date().toISOString(),
+    reinforcement_count: 0,
+  });
+  writeFileSync(
+    join(TEMP_DIR, ".oh-my-beads", "state", "cancel-signal.json"),
+    JSON.stringify({ cancelled_at: new Date(Date.now() - 60_000).toISOString(), expires_at: new Date(Date.now() - 30_000).toISOString() })
+  );
+  const { output } = runScript("persistent-mode.cjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.decision === "block", "should block stop with expired cancel signal");
+});
+
+test("allows stop when awaiting_confirmation is true", () => {
+  writeState({
+    active: true, current_phase: "bootstrap",
+    started_at: new Date().toISOString(),
+    last_checked_at: new Date().toISOString(),
+    reinforcement_count: 0,
+    awaiting_confirmation: true,
+  });
+  const { output } = runScript("persistent-mode.cjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(!parsed?.decision || parsed.decision !== "block", "should allow stop while awaiting confirmation");
 });
 
 test("increments reinforcement_count on block", () => {
@@ -427,6 +488,7 @@ test("blocks Write for reviewer", () => {
   const parsed = parseOutput(output);
   assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "reviewer Write");
   assert(parsed?.decision === "block", "should use native engine-level decision: block");
+  assert(parsed?.hookSpecificOutput?.permissionDecision === "deny", "should use permissionDecision: deny for engine enforcement");
 });
 
 test("blocks Edit for master", () => {
@@ -675,6 +737,20 @@ test("writes handoff markdown", () => {
   assertContains(content, "phase_4_decomposition", "handoff contains phase");
 });
 
+test("includes systemMessage for post-compaction re-injection", () => {
+  resetState();
+  writeState({
+    active: true, current_phase: "phase_6_execution", mode: "mr.beads",
+    started_at: new Date().toISOString(), feature_slug: "sysmsg-test",
+  });
+  const { output } = runScript("pre-compact.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.systemMessage, "should include systemMessage");
+  assertContains(parsed.systemMessage, "POST-COMPACTION CONTEXT", "systemMessage header");
+  assertContains(parsed.systemMessage, "Mr.Beads", "systemMessage includes mode");
+  assertContains(parsed.systemMessage, "sysmsg-test", "systemMessage includes feature");
+});
+
 // ---- SESSION START: POST-COMPACTION RESUME ----
 
 console.log("\n=== session-start.mjs (Post-Compaction) ===\n");
@@ -724,7 +800,7 @@ test("normal startup with no session shows only banner", () => {
   resetState();
   const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "startup" });
   const parsed = parseOutput(output);
-  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "oh-my-beads plugin loaded", "should show banner");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "oh-my-beads v1.1.0 loaded", "should show banner");
   assert(!(parsed?.hookSpecificOutput?.additionalContext || "").includes("ACTIVE SESSION"), "should not show active session");
 });
 
@@ -836,9 +912,14 @@ test("allows stop for fast_complete phase", () => {
 
 console.log("\n=== pre-tool-enforcer.mjs (Mr.Fast) ===\n");
 
-test("blocks Write for fast-scout", () => {
-  const { output } = runScript("pre-tool-enforcer.mjs", { tool_name: "Write" }, { OMB_AGENT_ROLE: "fast-scout" });
-  assertContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "fast-scout Write");
+test("allows Write BRIEF.md for fast-scout", () => {
+  const { output } = runScript("pre-tool-enforcer.mjs", { tool_name: "Write", tool_input: { file_path: "/project/BRIEF.md" } }, { OMB_AGENT_ROLE: "fast-scout" });
+  assertNotContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "fast-scout Write BRIEF.md");
+});
+
+test("blocks Write non-BRIEF for fast-scout", () => {
+  const { output } = runScript("pre-tool-enforcer.mjs", { tool_name: "Write", tool_input: { file_path: "/project/src/app.ts" } }, { OMB_AGENT_ROLE: "fast-scout" });
+  assertContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "fast-scout Write src/app.ts");
 });
 
 test("allows Read for fast-scout", () => {
@@ -970,6 +1051,368 @@ test("exact match prevents over-blocking (WriteFile not blocked by Write deny)",
   }, { OMB_AGENT_ROLE: "reviewer" });
   // WriteFile is not in reviewer deny list (only "Write" is), so should NOT be blocked
   assertNotContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "WriteFile not blocked");
+});
+
+// ---- PROMPT LEVERAGE: UNIT TESTS ----
+
+console.log("\n=== prompt-leverage.mjs ===\n");
+
+// Import prompt-leverage for direct unit testing
+const { detectTask, inferIntensity, upgradePrompt } = await import(join(SCRIPTS_DIR, "prompt-leverage.mjs"));
+
+test("detectTask identifies coding from 'fix bug'", () => {
+  assert(detectTask("fix the login bug in auth.ts") === "coding", "should detect coding");
+});
+
+test("detectTask identifies research from 'research compare'", () => {
+  assert(detectTask("research and compare database options") === "research", "should detect research");
+});
+
+test("detectTask identifies analysis from 'analyze root cause'", () => {
+  assert(detectTask("analyze root cause of the 500 errors") === "analysis", "should detect analysis");
+});
+
+test("detectTask identifies planning from 'plan roadmap'", () => {
+  assert(detectTask("plan the roadmap for Q3 release") === "planning", "should detect planning");
+});
+
+test("detectTask identifies review from 'audit'", () => {
+  assert(detectTask("audit the authentication middleware") === "review", "should detect review");
+});
+
+test("detectTask defaults to analysis for ambiguous input", () => {
+  assert(detectTask("make it better") === "analysis", "should default to analysis");
+});
+
+test("inferIntensity returns Deep for critical keywords", () => {
+  assert(inferIntensity("careful deep analysis of security", "analysis") === "Deep", "should be Deep");
+});
+
+test("inferIntensity returns Standard for coding tasks", () => {
+  assert(inferIntensity("fix the login bug", "coding") === "Standard", "should be Standard");
+});
+
+test("inferIntensity returns Light for writing tasks", () => {
+  assert(inferIntensity("draft a changelog", "writing") === "Light", "should be Light");
+});
+
+test("upgradePrompt returns clean enhanced prompt with guardrails", () => {
+  const { augmented, task, intensity } = upgradePrompt("implement a REST API endpoint");
+  assert(task === "coding", `task should be coding, got ${task}`);
+  assert(intensity === "Standard", `intensity should be Standard, got ${intensity}`);
+  // Original text preserved
+  assertContains(augmented, "implement a REST API endpoint", "augmented contains original");
+  // Task-specific guardrails woven in (no framework labels)
+  assertContains(augmented, "Inspect relevant files", "augmented has tool guidance");
+  assertContains(augmented, "Verify", "augmented has verification");
+  // No framework labels leaked
+  assertNotContains(augmented, "Objective:", "no Objective label");
+  assertNotContains(augmented, "Work Style:", "no Work Style label");
+  assertNotContains(augmented, "Done Criteria:", "no Done Criteria label");
+});
+
+test("upgradePrompt caps intensity to Standard in mr.fast mode", () => {
+  const { intensity } = upgradePrompt("carefully debug the critical auth issue", { mode: "mr.fast" });
+  assert(intensity === "Standard", `mr.fast should cap at Standard, got ${intensity}`);
+});
+
+test("upgradePrompt allows Deep in mr.beads mode", () => {
+  const { intensity } = upgradePrompt("carefully debug the critical auth issue", { mode: "mr.beads" });
+  assert(intensity === "Deep", `mr.beads should allow Deep, got ${intensity}`);
+});
+
+test("upgradePrompt preserves original text in output", () => {
+  const { augmented } = upgradePrompt("fix login validation bug");
+  assertContains(augmented, "fix login validation bug", "should preserve original text");
+});
+
+// ---- PROMPT LEVERAGE: INTEGRATION (keyword-detector output) ----
+
+console.log("\n=== keyword-detector.mjs (Prompt Leverage Integration) ===\n");
+
+test("omb keyword output includes augmented prompt", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "omb build a REST API" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "omb build a REST API", "should include original text");
+  assertContains(ctx, "Inspect relevant files", "should include tool guidance from prompt-leverage");
+});
+
+test("mr.fast keyword output includes augmented prompt", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "mr.fast fix the login bug" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "mr.fast fix the login bug", "should include original text");
+  assertContains(ctx, "Inspect relevant files", "should include tool guidance from prompt-leverage");
+});
+
+test("omb keyword output embeds original text in Objective", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "omb research database options" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "omb research database options", "should contain original text in Objective");
+  assertNotContains(ctx, "User Request (original)", "should NOT have separate original section");
+});
+
+test("non-keyword prompts are NOT augmented", () => {
+  const { output } = runScript("keyword-detector.mjs", { query: "fix the login bug" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext;
+  assert(!ctx, "non-keyword prompts should have no additionalContext");
+});
+
+// ---- POST TOOL USE FAILURE ----
+
+console.log("\n=== post-tool-use-failure.mjs ===\n");
+
+test("tracks first failure for a tool", () => {
+  resetState();
+  const { output } = runScript("post-tool-use-failure.mjs", {
+    cwd: TEMP_DIR, tool_name: "Bash", tool_error: "Error: command not found",
+  });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should continue");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "attempt 1", "first attempt");
+  const errorState = JSON.parse(readFileSync(join(TEMP_DIR, ".oh-my-beads", "state", "last-tool-error.json"), "utf8"));
+  assert(errorState.tool_name === "Bash", "should track tool name");
+  assert(errorState.retry_count === 1, "retry_count should be 1");
+  assert(errorState.escalated === false, "should not be escalated yet");
+});
+
+test("increments retry count for same tool within window", () => {
+  // First failure already set by previous test, let's set it explicitly
+  resetState();
+  const now = new Date().toISOString();
+  writeFileSync(
+    join(TEMP_DIR, ".oh-my-beads", "state", "last-tool-error.json"),
+    JSON.stringify({ tool_name: "Bash", retry_count: 3, last_failure_at: now, error_snippet: "err", escalated: false })
+  );
+  const { output } = runScript("post-tool-use-failure.mjs", {
+    cwd: TEMP_DIR, tool_name: "Bash", tool_error: "Error: still failing",
+  });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "attempt 4", "should increment");
+  const errorState = JSON.parse(readFileSync(join(TEMP_DIR, ".oh-my-beads", "state", "last-tool-error.json"), "utf8"));
+  assert(errorState.retry_count === 4, `retry_count should be 4, got ${errorState.retry_count}`);
+});
+
+test("resets retry count for different tool", () => {
+  resetState();
+  const now = new Date().toISOString();
+  writeFileSync(
+    join(TEMP_DIR, ".oh-my-beads", "state", "last-tool-error.json"),
+    JSON.stringify({ tool_name: "Bash", retry_count: 4, last_failure_at: now, error_snippet: "err", escalated: false })
+  );
+  const { output } = runScript("post-tool-use-failure.mjs", {
+    cwd: TEMP_DIR, tool_name: "Write", tool_error: "Permission denied",
+  });
+  const errorState = JSON.parse(readFileSync(join(TEMP_DIR, ".oh-my-beads", "state", "last-tool-error.json"), "utf8"));
+  assert(errorState.tool_name === "Write", "should track new tool");
+  assert(errorState.retry_count === 1, `retry_count should reset to 1, got ${errorState.retry_count}`);
+});
+
+test("escalates at threshold (5 retries)", () => {
+  resetState();
+  const now = new Date().toISOString();
+  writeFileSync(
+    join(TEMP_DIR, ".oh-my-beads", "state", "last-tool-error.json"),
+    JSON.stringify({ tool_name: "Bash", retry_count: 4, last_failure_at: now, error_snippet: "err", escalated: false })
+  );
+  const { output } = runScript("post-tool-use-failure.mjs", {
+    cwd: TEMP_DIR, tool_name: "Bash", tool_error: "Error: still broken",
+  });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "systemic issue", "escalation message");
+  const errorState = JSON.parse(readFileSync(join(TEMP_DIR, ".oh-my-beads", "state", "last-tool-error.json"), "utf8"));
+  assert(errorState.escalated === true, "should be escalated");
+  assert(errorState.retry_count === 5, `retry_count should be 5, got ${errorState.retry_count}`);
+});
+
+test("handles missing state directory gracefully", () => {
+  rmSync(join(TEMP_DIR, ".oh-my-beads"), { recursive: true, force: true });
+  mkdirSync(join(TEMP_DIR, ".oh-my-beads", "state"), { recursive: true });
+  const { output, exitCode } = runScript("post-tool-use-failure.mjs", {
+    cwd: TEMP_DIR, tool_name: "Read", tool_error: "File not found",
+  });
+  assert(exitCode === 0, "should not crash");
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should continue");
+  // Re-create dirs for subsequent tests
+  mkdirSync(join(TEMP_DIR, ".oh-my-beads", "plans"), { recursive: true });
+  mkdirSync(join(TEMP_DIR, ".oh-my-beads", "history"), { recursive: true });
+  mkdirSync(join(TEMP_DIR, ".oh-my-beads", "handoffs"), { recursive: true });
+});
+
+// ---- SESSION END ----
+
+console.log("\n=== session-end.mjs ===\n");
+
+test("deactivates non-critical active session on end", () => {
+  resetState();
+  writeState({
+    active: true, current_phase: "phase_2_planning",
+    started_at: new Date().toISOString(),
+  });
+  const { output } = runScript("session-end.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should continue");
+  const state = readState();
+  assert(state.active === false, "should deactivate on session end");
+  assert(state.deactivated_reason === "session_ended", "should note reason");
+  assert(state.session_ended_at, "should have session_ended_at");
+});
+
+test("preserves critical phase session on end", () => {
+  resetState();
+  writeState({
+    active: true, current_phase: "phase_6_execution",
+    started_at: new Date().toISOString(),
+  });
+  runScript("session-end.mjs", { cwd: TEMP_DIR });
+  const state = readState();
+  assert(state.active === true, "should remain active for critical phase");
+  assert(state.session_ended_at, "should still note session end time");
+});
+
+test("does nothing when no active session", () => {
+  resetState();
+  const { output } = runScript("session-end.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should continue");
+  assert(!parsed?.hookSpecificOutput?.additionalContext, "no context for inactive session");
+});
+
+test("cleans up last-tool-error.json", () => {
+  resetState();
+  writeState({ active: true, current_phase: "phase_3_persistence", started_at: new Date().toISOString() });
+  writeFileSync(
+    join(TEMP_DIR, ".oh-my-beads", "state", "last-tool-error.json"),
+    JSON.stringify({ tool_name: "Bash", retry_count: 3 })
+  );
+  runScript("session-end.mjs", { cwd: TEMP_DIR });
+  const errorState = JSON.parse(readFileSync(join(TEMP_DIR, ".oh-my-beads", "state", "last-tool-error.json"), "utf8"));
+  assert(errorState.reason === "session_end", "should clear error state");
+});
+
+// ---- CONTEXT GUARD STOP ----
+
+console.log("\n=== context-guard-stop.mjs ===\n");
+
+test("passes through when no active session", () => {
+  resetState();
+  const { output } = runScript("context-guard-stop.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should continue");
+  assert(parsed?.suppressOutput === true, "should suppress output");
+});
+
+test("passes through for normal stop (no context pressure)", () => {
+  resetState();
+  writeState({
+    active: true, current_phase: "phase_6_execution",
+    started_at: new Date().toISOString(),
+  });
+  const { output } = runScript("context-guard-stop.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should pass through");
+  assert(parsed?.suppressOutput === true, "should suppress output");
+});
+
+test("allows stop on inactive session", () => {
+  resetState();
+  writeState({ active: false, current_phase: "complete" });
+  const { output } = runScript("context-guard-stop.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should allow stop");
+});
+
+// ---- WORKER GUARD: KEYWORD DETECTOR ----
+
+console.log("\n=== keyword-detector.mjs (Worker Guard) ===\n");
+
+test("skips keyword matching when OMB_AGENT_ROLE is set", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "omb build feature" }, { OMB_AGENT_ROLE: "worker" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext;
+  assert(!ctx || !ctx.includes("MAGIC KEYWORD"), "should not trigger keyword when OMB_AGENT_ROLE is set");
+});
+
+test("skips keyword matching when OMB_TEAM_WORKER is set", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "mr.fast fix bug" }, { OMB_TEAM_WORKER: "true" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext;
+  assert(!ctx || !ctx.includes("MAGIC KEYWORD"), "should not trigger keyword when OMB_TEAM_WORKER is set");
+});
+
+test("still detects keywords without worker env vars", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "omb start feature" }, {});
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "MAGIC KEYWORD: oh-my-beads", "should detect without worker vars");
+});
+
+// ---- OUTPUT CLIPPING: POST-TOOL VERIFIER ----
+
+console.log("\n=== post-tool-verifier.mjs (Output Clipping) ===\n");
+
+test("clips output exceeding MAX_OUTPUT_CHARS", () => {
+  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
+  const bigOutput = "x".repeat(15000);
+  const { output } = runScript("post-tool-verifier.mjs", { cwd: TEMP_DIR, tool_name: "Bash", tool_output: bigOutput });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "clipped", "should clip large output");
+});
+
+test("passes through output under MAX_OUTPUT_CHARS", () => {
+  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
+  const { output } = runScript("post-tool-verifier.mjs", { cwd: TEMP_DIR, tool_name: "Bash", tool_output: "All tests passed" });
+  const parsed = parseOutput(output);
+  assert(!parsed?.hookSpecificOutput?.additionalContext, "should not clip small output");
+});
+
+test("respects OMB_MAX_OUTPUT_CHARS env override", () => {
+  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
+  const mediumOutput = "y".repeat(600);
+  const { output } = runScript("post-tool-verifier.mjs", { cwd: TEMP_DIR, tool_name: "Bash", tool_output: mediumOutput }, { OMB_MAX_OUTPUT_CHARS: "500" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "clipped", "should clip with custom threshold");
+});
+
+// ---- SESSION-SCOPED STATE: POST-TOOL VERIFIER ----
+
+console.log("\n=== post-tool-verifier.mjs (Session-Scoped State) ===\n");
+
+test("writes tracking to session-scoped path when session_id provided", () => {
+  resetState();
+  const scopedDir = join(TEMP_DIR, ".oh-my-beads", "state", "sessions", "test-session-123");
+  mkdirSync(scopedDir, { recursive: true });
+  writeFileSync(
+    join(scopedDir, "session.json"),
+    JSON.stringify({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() })
+  );
+  runScript("post-tool-verifier.mjs", {
+    cwd: TEMP_DIR, session_id: "test-session-123",
+    tool_name: "Write", tool_input: { file_path: "/tmp/scoped-test.ts" }, tool_output: "Written",
+  });
+  const trackingPath = join(scopedDir, "tool-tracking.json");
+  assert(existsSync(trackingPath), "session-scoped tool-tracking.json should exist");
+  const tracking = JSON.parse(readFileSync(trackingPath, "utf8"));
+  assert(tracking.files_modified.includes("/tmp/scoped-test.ts"), "should track file in scoped path");
+});
+
+test("falls back to legacy path without session_id", () => {
+  resetState();
+  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
+  runScript("post-tool-verifier.mjs", {
+    cwd: TEMP_DIR, tool_name: "Write", tool_input: { file_path: "/tmp/legacy-test.ts" }, tool_output: "Written",
+  });
+  const trackingPath = join(TEMP_DIR, ".oh-my-beads", "state", "tool-tracking.json");
+  assert(existsSync(trackingPath), "legacy tool-tracking.json should exist");
 });
 
 // ============================================================

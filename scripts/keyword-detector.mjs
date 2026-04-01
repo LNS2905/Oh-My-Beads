@@ -9,7 +9,9 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from "fs";
-import { join } from "path";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+import { upgradePrompt } from "./prompt-leverage.mjs";
 
 // --- Config ---
 const KEYWORDS = [
@@ -29,8 +31,9 @@ const STATE_DIR = join(process.cwd(), ".oh-my-beads", "state");
 function extractPrompt(input) {
   try {
     const data = JSON.parse(input);
-    // Claude Code hook format: { query, ... } or { prompt, ... }
-    return data.query ?? data.prompt ?? data.message ?? (typeof data === "string" ? data : "");
+    // Claude Code sends `prompt` field for UserPromptSubmit hook.
+    // `query` and `message` are legacy fallbacks for test compatibility.
+    return data.prompt ?? data.query ?? data.message ?? (typeof data === "string" ? data : "");
   } catch {
     return input; // plain text
   }
@@ -47,8 +50,19 @@ function sanitize(text) {
 
 function isInformational(text, keyword) {
   const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const around = new RegExp(`(?:what|how|why|explain|describe|tell me about)\\s+(?:is|does|are)?\\s*${escaped}`, "i");
-  return around.test(text);
+  const kwRegex = new RegExp(escaped, "gi");
+  let match;
+  while ((match = kwRegex.exec(text)) !== null) {
+    // Check ±80 char context window around the match
+    const start = Math.max(0, match.index - 80);
+    const end = Math.min(text.length, match.index + match[0].length + 80);
+    const window = text.slice(start, end).toLowerCase();
+    // English inquiry patterns
+    if (/(?:what|how|why|explain|describe|tell\s+me\s+about|does|can|is\s+there|when\s+to\s+use|where|who)\s+(?:is|does|are|do|should|would|could|can)?/.test(window)) return true;
+    // Trailing question mark within window
+    if (/\?\s*$/.test(window.trim())) return true;
+  }
+  return false;
 }
 
 function hookOutput(additionalContext) {
@@ -74,12 +88,22 @@ function writeSessionState(phase, mode = "mr.beads") {
     mode,
     started_at: new Date().toISOString(),
     reinforcement_count: 0,
+    awaiting_confirmation: true,
   };
   writeFileSync(join(STATE_DIR, "session.json"), JSON.stringify(state, null, 2));
 }
 
 function clearSessionState() {
   const sessionFile = join(STATE_DIR, "session.json");
+  // Write cancel signal file with 30s TTL to prevent TOCTOU race
+  try {
+    ensureStateDir();
+    const signal = {
+      cancelled_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 30_000).toISOString(),
+    };
+    writeFileSync(join(STATE_DIR, "cancel-signal.json"), JSON.stringify(signal, null, 2));
+  } catch { /* best effort */ }
   if (existsSync(sessionFile)) {
     try {
       const state = JSON.parse(readFileSync(sessionFile, "utf8"));
@@ -98,6 +122,12 @@ let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => (input += chunk));
 process.stdin.on("end", () => {
+  // Guard: skip keyword matching for subagent workers (prevents infinite spawn loops)
+  if (process.env.OMB_AGENT_ROLE || process.env.OMB_TEAM_WORKER) {
+    hookOutput(null);
+    return;
+  }
+
   const raw = extractPrompt(input.trim());
   const clean = sanitize(raw);
 
@@ -116,16 +146,18 @@ process.stdin.on("end", () => {
 
     if (kw.action === "invoke-fast") {
       writeSessionState("fast_bootstrap", "mr.fast");
+      const { augmented } = upgradePrompt(raw, { mode: "mr.fast" });
       hookOutput(
-        `[MAGIC KEYWORD: mr-fast]\n\nYou MUST invoke the skill using the Skill tool:\n\nSkill: oh-my-beads:mr-fast\n\nUser request:\n${raw}\n\nIMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`
+        `[MAGIC KEYWORD: mr-fast]\n\nYou MUST invoke the skill using the Skill tool:\n\nSkill: oh-my-beads:mr-fast\n\nUser request:\n${augmented}\n\nIMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`
       );
       return;
     }
 
     // Activate Mr.Beads (default mode)
     writeSessionState("bootstrap", "mr.beads");
+    const { augmented } = upgradePrompt(raw, { mode: "mr.beads" });
     hookOutput(
-      `[MAGIC KEYWORD: oh-my-beads]\n\nYou MUST invoke the skill using the Skill tool:\n\nSkill: oh-my-beads:using-oh-my-beads\n\nUser request:\n${raw}\n\nIMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`
+      `[MAGIC KEYWORD: oh-my-beads]\n\nYou MUST invoke the skill using the Skill tool:\n\nSkill: oh-my-beads:using-oh-my-beads\n\nUser request:\n${augmented}\n\nIMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`
     );
     return;
   }

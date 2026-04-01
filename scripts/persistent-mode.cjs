@@ -10,12 +10,22 @@
  *
  * This is what makes the 8-step workflow autonomous.
  *
+ * Claude Code Stop hook input schema:
+ *   - hook_event_name: 'Stop'
+ *   - stop_hook_active: boolean
+ *   - last_assistant_message?: string
+ *   - session_id, transcript_path, cwd (base fields)
+ *
+ * NOTE: Claude Code does NOT send stop_reason, user_requested, or
+ * context_limit fields. Context limits and user aborts are handled
+ * by the engine BEFORE the Stop hook fires. The Stop hook only fires
+ * when the model decides to stop on its own.
+ *
  * Safety:
  * - Max 50 reinforcements before allowing stop (circuit breaker)
  * - 2-hour staleness timeout (prevents blocking new sessions)
- * - Respects context limits (allows compaction)
- * - Respects user abort (Ctrl+C)
- * - Respects cancel signals
+ * - Respects cancel signals from keyword-detector
+ * - Pre-compact checkpoint writing for session recovery
  */
 
 const { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } = require("fs");
@@ -24,6 +34,13 @@ const { join, dirname } = require("path");
 // --- Constants ---
 const MAX_REINFORCEMENTS = 50;
 const STALE_THRESHOLD_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+// --- Inline session-scoped state dir resolution (CJS cannot import ESM) ---
+function resolveStateDirCjs(directory, data) {
+  const sessionId = data?.session_id ?? data?.sessionId ?? process.env.CLAUDE_SESSION_ID ?? null;
+  if (sessionId) return join(directory, ".oh-my-beads", "state", "sessions", sessionId);
+  return join(directory, ".oh-my-beads", "state");
+}
 
 const TERMINAL_PHASES = new Set([
   "complete", "completed", "failed", "cancelled", "canceled",
@@ -77,21 +94,6 @@ function isStale(state) {
   return (Date.now() - mostRecent) > STALE_THRESHOLD_MS;
 }
 
-function isContextLimitStop(data) {
-  const reasons = [data.stop_reason, data.stopReason, data.reason]
-    .filter(v => typeof v === "string")
-    .map(v => v.toLowerCase().replace(/[\s-]+/g, "_"));
-  const patterns = ["context_limit", "context_window", "context_full", "max_tokens", "token_limit"];
-  return reasons.some(r => patterns.some(p => r.includes(p)));
-}
-
-function isUserAbort(data) {
-  if (data.user_requested || data.userRequested) return true;
-  const reason = (data.stop_reason || data.stopReason || "").toLowerCase();
-  return ["aborted", "abort", "cancel", "interrupt"].includes(reason) ||
-    ["user_cancel", "user_interrupt", "ctrl_c", "manual_stop"].some(p => reason.includes(p));
-}
-
 function allowStop() {
   process.stdout.write(JSON.stringify({ continue: true, suppressOutput: true }));
 }
@@ -100,10 +102,9 @@ function blockStop(reason) {
   process.stdout.write(JSON.stringify({ decision: "block", reason }));
 }
 
-function writeCheckpoint(directory, state, reason) {
+function writeCheckpoint(stateDir, directory, state, reason) {
   if (!state) return;
   try {
-    const stateDir = join(directory, ".oh-my-beads", "state");
     const handoffsDir = join(directory, ".oh-my-beads", "handoffs");
     const now = new Date().toISOString();
 
@@ -143,21 +144,11 @@ async function main() {
   try { data = JSON.parse(input); } catch {}
 
   const directory = data.cwd || data.directory || process.cwd();
-  const stateFile = join(directory, ".oh-my-beads", "state", "session.json");
+  const stateDir = resolveStateDirCjs(directory, data);
+  const stateFile = join(stateDir, "session.json");
 
-  // Read session state early (needed for checkpoint on context_limit)
+  // Read session state
   const state = readJson(stateFile);
-
-  // Safety: never block context-limit stops (prevents compaction deadlock)
-  // But DO write a checkpoint before allowing
-  if (isContextLimitStop(data)) {
-    writeCheckpoint(directory, state, "context_limit");
-    allowStop();
-    return;
-  }
-
-  // Safety: respect user abort (Ctrl+C)
-  if (isUserAbort(data)) { allowStop(); return; }
 
   // No active session → allow stop
   if (!state || !state.active) { allowStop(); return; }
@@ -169,10 +160,20 @@ async function main() {
   const phase = state.current_phase || "unknown";
   if (TERMINAL_PHASES.has(phase)) { allowStop(); return; }
 
-  // Cancel signal → allow stop
+  // Cancel signal (set by keyword-detector) → allow stop
   if (state.cancel_requested) { allowStop(); return; }
 
-  // Circuit breaker: max reinforcements reached → allow stop
+  // Cancel signal file with TTL → allow stop (prevents TOCTOU race)
+  const cancelSignal = readJson(join(stateDir, "cancel-signal.json"));
+  if (cancelSignal && cancelSignal.expires_at) {
+    const expiresAt = new Date(cancelSignal.expires_at).getTime();
+    if (Date.now() < expiresAt) { allowStop(); return; }
+  }
+
+  // Awaiting confirmation (skill not yet initialized) → allow stop
+  if (state.awaiting_confirmation) { allowStop(); return; }
+
+  // Circuit breaker: max reinforcements reached → allow stop + deactivate
   const count = (state.reinforcement_count || 0) + 1;
   if (count > MAX_REINFORCEMENTS) {
     state.active = false;

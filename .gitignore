@@ -32,6 +32,14 @@ skills-ref/
 .claude/
 claude-code-main-ref/
 
+# Runtime data (beads-village, mail)
+.beads-village/
+.beads/
+.mail/
+
+# Benchmark reports
+benchmark-report.md
+
 # Harness skills (installed per-environment, not part of source)
 .agents/
 .factory/

@@ -52,10 +52,29 @@
         ]
       }
     ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/run.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/post-tool-use-failure.mjs\"",
+            "timeout": 3,
+            "statusMessage": "Tracking tool failure..."
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "matcher": "",
         "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/run.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/context-guard-stop.mjs\"",
+            "timeout": 3,
+            "statusMessage": "Checking context pressure..."
+          },
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/persistent-mode.cjs\"",
@@ -100,6 +119,25 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/run.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/subagent-tracker.mjs\"",
             "timeout": 5,
             "statusMessage": "Checking subagent results..."
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/run.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/verify-deliverables.mjs\"",
+            "timeout": 5,
+            "statusMessage": "Verifying subagent deliverables..."
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/run.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/session-end.mjs\"",
+            "timeout": 30,
+            "statusMessage": "Cleaning up session..."
           }
         ]
       }

@@ -43,6 +43,13 @@ planning and implementation.
 1. **Load Context**
    - Read user request from spawn prompt
    - Check `.oh-my-beads/history/<feature>/CONTEXT.md` (resume case)
+   - **Apply Learnings Retrieval Protocol** (`skills/compounding/references/learnings-retrieval-protocol.md`)
+     1. Read `.oh-my-beads/history/learnings/critical-patterns.md` (if exists)
+     2. Extract 3-5 domain keywords from the user's request
+     3. Grep `.oh-my-beads/history/learnings/` for matching tags
+     4. Score: strong match → read full file; weak → skip
+     5. Use found learnings to ask sharper questions (known pitfalls, proven patterns)
+     6. Include "Institutional Learnings Applied" section in CONTEXT.md
    - Use Glob/Grep/Read to understand existing codebase (informed questions)
 
 2. **Domain Classification**
@@ -56,7 +63,10 @@ planning and implementation.
    | ORGANIZE | Refactor/Structure |
 
 3. **Gray Area Identification**
-   List ambiguities internally. Rank by impact (high = rework if wrong).
+   Consult `skills/scout/references/gray-area-probes.md` for domain-specific probe templates.
+   Scan the relevant domain section (SEE/CALL/RUN/READ/ORGANIZE) and cross-cutting probes.
+   List unresolved ambiguities internally. Rank by impact (high = expensive rework if wrong).
+   Include any relevant critical-patterns warnings as high-priority gray areas.
 
 4. **Socratic Exploration**
    For each gray area (highest impact first):
@@ -81,6 +91,9 @@ planning and implementation.
    ## Scope Boundaries
    - IN: <what's included>
    - OUT: <what's excluded>
+   ## Institutional Learnings Applied
+   - <learning title from file>: <how it applies to this feature>
+   - Or: "No prior learnings for this domain."
    ```
    Write to: `.oh-my-beads/history/<feature>/CONTEXT.md`
 
@@ -120,5 +133,6 @@ Why bad: Three questions batched. Must be one at a time.
 - [ ] All high/medium impact gray areas resolved
 - [ ] Each answer locked as numbered decision (D1, D2...)
 - [ ] CONTEXT.md written with decisions, scope boundaries, deferrals
+- [ ] Learnings retrieval protocol executed (critical-patterns.md + domain grep)
 - [ ] Report sent to Master
 </Final_Checklist>

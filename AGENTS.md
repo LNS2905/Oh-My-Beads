@@ -15,13 +15,33 @@ Oh-My-Beads has two execution modes:
 
 ### Mr.Beads Flow (8-step)
 ```
-Scout → Gate 1 → Architect → Gate 2 → Plan → Decomposition → Validation → Gate 3 → Workers → Reviews → Summary
+User prompt → keyword-detector → prompt-leverage (augment) → Mr.Beads bootstrap
+Scout → Gate 1 → Architect → Gate 2 → Plan → Decomposition → Validation → Gate 3 → Workers → Reviews → Full Review → Compounding
 ```
 
 ### Mr.Fast Flow (2-step)
 ```
+User prompt → keyword-detector → prompt-leverage (augment) → Mr.Fast bootstrap
 Fast Scout (0-2 questions) → Executor (implement + verify)
 ```
+
+### Prompt Leverage (automatic, both modes)
+
+Every keyword-triggered invocation automatically runs prompt-leverage to strengthen the
+user's raw prompt before routing to agents. The augmented prompt includes:
+
+| Block | Purpose |
+|-------|---------|
+| Objective | Task + success definition |
+| Context | Intent preservation + assumptions |
+| Work Style | Task type + intensity (Light/Standard/Deep) |
+| Tool Rules | Task-specific tool guidance |
+| Output Contract | Expected result format |
+| Verification | Correctness checks |
+| Done Criteria | When to stop |
+
+Mr.Fast caps intensity at Standard (speed over thoroughness).
+Both the original and augmented prompts are passed to agents.
 
 ## Quick Start
 
@@ -54,13 +74,15 @@ Phase 3: Plan Persistence                  [Master]
    ↓
 Phase 4: Team Init & Task Breakdown        [Architect + beads_village]
    ↓
-Phase 5: Task Description Review           [Reviewer: validate mode]
+Phase 5: Validation & Approval             [Validating skill: 8 dimensions + spikes + polishing]
    ↓
  GATE 3: User chooses Sequential or Parallel
    ↓
-Phase 6: Execution                         [Worker(s)]
+Phase 6: Execution                         [Worker(s) or Swarming skill]
    ↓
 Phase 7: Per-Task Quality Review           [Reviewer: review mode, per bead]
+   ↓
+Phase 7.5: Feature-Level Full Review       [Reviewer: full-review mode, 5 specialist agents]
    ↓
 Phase 8: Final Summary & Compounding       [Master]
 ```
@@ -74,8 +96,10 @@ Phase 8: Final Summary & Compounding       [Master]
 **Agent:** Scout | **Skill:** `oh-my-beads:scout`
 
 The Scout clarifies requirements through Socratic dialogue:
+- Reads `critical-patterns.md` (past learnings) to inform questions
 - One question at a time (never batched)
 - Domain classification: SEE | CALL | RUN | READ | ORGANIZE
+- Uses domain-specific gray area probes (`scout/references/gray-area-probes.md`)
 - Gray areas probed by impact priority
 - Decisions locked as D1, D2, D3...
 
@@ -117,28 +141,23 @@ This ensures the plan survives context compaction or session restarts.
    - File scope isolation enforced
 3. Master verifies graph: `graph()`, `bv_insights()` (check for cycles)
 
-### Phase 5: Task Description Review
+### Phase 5: Validation & Approval
 
-**Agent:** Reviewer (validate mode) | **Skill:** `oh-my-beads:reviewer`
+**Skill:** `oh-my-beads:validating`
 
-Before any code is written, the Reviewer audits every bead across 6 dimensions:
+Comprehensive pre-execution verification across 5 phases:
 
-| Dimension | Question | FAIL Condition |
-|-----------|----------|----------------|
-| Clarity | Can a dev implement from description alone? | Ambiguous or incomplete |
-| Scope | Do file scopes overlap between beads? | Same file, no region spec |
-| Dependencies | Are deps correct and complete? | Missing, circular, or dangling |
-| Acceptance Criteria | Are criteria concrete and verifiable? | Vague ("works correctly") |
-| Context Budget | Is description under 2000 chars? | Exceeds budget |
-| Completeness | Do beads cover the full plan? | Stories without beads |
+1. **Structural verification** — 8 dimensions (plan coherence, story coverage, decision coverage, dependency correctness, file scope isolation, context budget, verification completeness, exit-state completeness). Max 3 iterations.
+2. **Spike execution** — time-boxed investigation for HIGH-risk items. YES → embed findings. NO → full stop, replan.
+3. **Bead polishing** — graph health (`bv_insights`), priority alignment (`bv_priority`), execution tracks (`bv_plan`), deduplication, fresh-eyes bead review (subagent).
+4. **Exit-state readiness** — confirms feature will be delivered if all beads close.
+5. **Approval gate (HITL Gate 3)** — structured summary + user chooses Sequential or Parallel.
 
-**Max 3 validation iterations.** If still failing: escalate to user.
-
-**HITL Gate 3:** User chooses execution mode (Sequential or Parallel).
+Reference files: `skills/validating/references/plan-checker-prompt.md`, `skills/validating/references/bead-reviewer-prompt.md`
 
 ### Phase 6: Execution
 
-**Agent:** Worker(s) | **Skill:** `oh-my-beads:worker`
+**Agent:** Worker(s) | **Skill:** `oh-my-beads:worker` (sequential), `oh-my-beads:swarming` (parallel)
 
 #### Sequential Mode
 ```
@@ -151,16 +170,22 @@ For each ready bead (in dependency order):
   6. If FAIL: re-spawn Worker (max 2 retries)
 ```
 
-#### Parallel Mode
+#### Parallel Mode (Swarming)
+
+Invokes the swarming skill for orchestrated parallel execution:
+
 ```
-Loop until all beads closed:
-  1. Master gets all ready beads: ls(status="ready")
-  2. Master checks file conflicts: reservations()
-  3. For each conflict-free bead: spawn Worker (background)
-  4. As Workers complete → Phase 7 review per bead
-  5. On PASS: done(id) → unblocks dependents
-  6. On FAIL: re-queue
+Swarming Orchestrator:
+  1. Confirm readiness: ls(status="ready"), bv_insights()
+  2. Spawn self-routing Worker pool (2-4 concurrent Workers)
+  3. Workers self-route: ls(status="ready") → claim() → reserve() → implement → msg() → release() → loop
+  4. Orchestrator monitors: inbox(), reservations(), handles file conflicts
+  5. Per-bead review: Reviewer spawned as each Worker completes
+  6. On PASS: done(id) → unblocks dependents
+  7. On FAIL: re-spawn Worker with feedback (max 2 retries)
 ```
+
+Reference files: `skills/swarming/references/worker-spawn-template.md`, `skills/swarming/references/message-templates.md`
 
 **Concurrency safety:** Entirely via beads_village:
 - `reserve(paths)` — exclusive file locks
@@ -188,22 +213,43 @@ Runs **per bead**, immediately after each Worker completes:
 
 **No TDD mandate.** Focus on functional review, not test coverage.
 
+### Phase 7.5: Feature-Level Full Review
+
+**Agent:** Reviewer (full-review mode) | **Skill:** `oh-my-beads:reviewer`
+
+After ALL per-bead reviews pass, runs 5 specialist agents for cross-cutting analysis:
+
+| Agent | Focus | Severity |
+|-------|-------|----------|
+| Code Quality | Simplicity, DRY, error handling, type safety, decision compliance | P1-P3 |
+| Architecture | Coupling, cohesion, separation of concerns, API design, patterns | P1-P3 |
+| Security | OWASP Top 10, secrets, supply chain, misconfigs | Always P1 |
+| Test Coverage | Unit tests, edge cases, integration gaps, AC verification | P1-P3 |
+| Learnings Synthesizer | Cross-reference with critical-patterns.md, flag new patterns | P3 (candidates) |
+
+**Review findings become beads_village issues:**
+- **P1** (blocking) → Must fix before Phase 8. Worker re-spawned.
+- **P2/P3** (non-blocking) → Tracked as follow-up beads.
+
+**Artifact verification (3-level):** EXISTS → SUBSTANTIVE → WIRED for all deliverables.
+
+Reference files: `skills/reviewer/references/review-agent-prompts.md`, `skills/reviewer/references/review-bead-template.md`
+
 ### Phase 8: Final Summary & Compounding
 
-**Agent:** Master (direct)
+**Agent:** Master (direct) + Compounding Skill
 
 1. Verify all beads closed: `ls(status="open")` returns empty
-2. Generate report:
-   - Beads completed, files modified, review retries
-   - Per-bead change summaries
-3. **Compounding advice** — patterns observed for future work:
-   - What worked well (repeat)
-   - What caused issues (avoid)
-   - Conventions established
-   - Dependency patterns discovered
-4. Write `.oh-my-beads/history/<feature>/WRAP-UP.md`
-5. Append learnings to `.oh-my-beads/history/learnings.md`
-6. Clear session state
+2. Write `.oh-my-beads/history/<feature>/WRAP-UP.md` — execution report
+3. **Invoke compounding skill** (`oh-my-beads:compounding`) for structured learning capture:
+   - 4 parallel analysis agents: Pattern Extractor, Decision Analyst, Failure Analyst, Exit-State Auditor
+   - Produces `.oh-my-beads/history/learnings/YYYYMMDD-<slug>.md`
+   - Promotes critical findings to `.oh-my-beads/history/learnings/critical-patterns.md`
+4. Clear session state
+
+The compounding flywheel ensures each completed feature makes the next one faster:
+- **Scout** reads critical-patterns.md at Phase 1 → asks sharper questions
+- **Architect** reads critical-patterns.md at Phase 2 → avoids known pitfalls
 
 ---
 
@@ -248,13 +294,21 @@ Agent definitions live in `agents/*.md`. Each file defines the agent's role, mod
 | **Fast Scout** | `agents/fast-scout.md` | `oh-my-beads:fast-scout` | NO | (none) | sonnet |
 | **Architect** | `agents/architect.md` | `oh-my-beads:architect` | NO | add (via Master) | opus |
 | **Worker** | `agents/worker.md` | `oh-my-beads:worker` | YES | init, claim, show, reserve, release, msg | sonnet |
-| **Reviewer** | `agents/reviewer.md` | `oh-my-beads:reviewer` | NO | ls, show, msg | sonnet |
+| **Reviewer** | `agents/reviewer.md` | `oh-my-beads:reviewer` | NO | ls, show, search, add, msg | sonnet |
 | **Explorer** | `agents/explorer.md` | — | NO | (none) | haiku |
 | **Executor** | `agents/executor.md` | — | YES | reserve, release | sonnet/opus |
 | **Verifier** | `agents/verifier.md` | — | NO | (none) | sonnet |
 | **Code Reviewer** | `agents/code-reviewer.md` | — | NO | (none) | opus |
 | **Security Reviewer** | `agents/security-reviewer.md` | — | NO | (none) | sonnet |
 | **Test Engineer** | `agents/test-engineer.md` | — | Test files only | (none) | sonnet |
+
+**Skills (not agents, but invoked as skills):**
+
+| Skill | Skill File | Phase | beads_village Tools | Model |
+|-------|-----------|-------|-------------------|-------|
+| **Validating** | `skills/validating/SKILL.md` | Phase 5 | ls, show, bv_insights, bv_priority, bv_plan, graph, add, done | sonnet (subagents) |
+| **Swarming** | `skills/swarming/SKILL.md` | Phase 6 (parallel) | ls, show, done, reservations, msg, inbox, ack_message, bv_insights | sonnet (Workers) |
+| **Debugging** | `skills/debugging/SKILL.md` | Error recovery | show, add, msg, inbox, bv_insights, reservations | sonnet |
 
 ## Context Isolation
 
@@ -264,8 +318,11 @@ Sub-agents receive ONLY what they need:
 |-------|----------|-----------------|
 | Scout | User request, feature slug | Plans, beads, code |
 | Architect | CONTEXT.md, handoffs | Scout's conversation, other agents |
+| Validating | All beads + plan + CONTEXT.md | Scout/Architect conversations |
 | Worker | Single bead description + referenced decisions | Full plan, other beads, chat history |
+| Swarming | All beads + reservations + messaging | Scout/Architect conversations, source code |
 | Reviewer | Bead details + worker output OR bead list | Full plan (review mode), chat history |
+| Reviewer (full-review) | Git diff + CONTEXT.md + plan.md + closed beads | Scout/Architect conversations, session state |
 
 ## beads_village Lifecycle
 
@@ -304,11 +361,16 @@ All gates are **mandatory and blocking**.
 
 | Error | Action |
 |-------|--------|
-| Worker fails implementation | Re-spawn with failure context (max 2 retries → escalate) |
-| Review rejects bead | Re-spawn Worker with feedback (max 2 retries → escalate) |
+| Worker fails implementation | Re-spawn with failure context (max 2 retries → invoke debugging skill → escalate) |
+| Review rejects bead | Re-spawn Worker with feedback (max 2 retries → invoke debugging skill → escalate) |
+| Full-review P1 findings | Worker re-spawned to fix → re-review (max 2 iterations → escalate) |
+| Build/test failure | Invoke debugging skill (triage → reproduce → diagnose → fix → learn) |
 | beads_village error | `doctor()` → retry → if still fails, pause and report |
-| File lock conflict (parallel) | Defer bead to next cycle |
+| Validation fails 3 iterations | Escalate to user with failing dimensions |
+| Spike returns NO | Full stop → approach needs replanning |
+| File lock conflict (parallel) | Swarming resolves: wait, release, or defer bead |
 | Context budget exceeded | Write handoff, spawn fresh sub-agent |
+| Swarm orchestrator context heavy | Checkpoint + broadcast pause + handoff |
 | User cancels mid-session | Write state, clean up active beads |
 
 ## Directory Structure
@@ -341,18 +403,48 @@ OhMyBeads/                              # Plugin root (git repo)
 │   ├── session-start.mjs              # SessionStart: bootstrap + resume
 │   ├── pre-tool-enforcer.mjs          # PreToolUse: role-based access control
 │   ├── post-tool-verifier.mjs         # PostToolUse: failure detection & tracking
+│   ├── post-tool-use-failure.mjs      # PostToolUseFailure: retry tracking & escalation
+│   ├── context-guard-stop.mjs         # Stop: context pressure detection (runs before persistent-mode)
 │   ├── persistent-mode.cjs            # Stop: autonomy engine (blocks premature stops)
+│   ├── session-end.mjs                # SessionEnd: cleanup state, deactivate sessions
+│   ├── prompt-leverage.mjs            # Prompt augmentation (imported by keyword-detector)
 │   ├── subagent-tracker.mjs           # Subagent lifecycle tracking
 │   └── verify-deliverables.mjs        # Verify subagent outputs by role
 ├── skills/                             # All skills at plugin root
 │   ├── using-oh-my-beads/SKILL.md      # Bootstrap & entry point
 │   ├── mr-fast/SKILL.md                # Mr.Fast entry point
 │   ├── master/SKILL.md                 # Master Orchestrator (8-step)
-│   ├── scout/SKILL.md                  # Phase 1: Socratic exploration
+│   ├── scout/                          # Phase 1: Socratic exploration
+│   │   ├── SKILL.md
+│   │   └── references/
+│   │       └── gray-area-probes.md     # Domain-specific probe templates
 │   ├── fast-scout/SKILL.md             # Mr.Fast: Rapid analysis
 │   ├── architect/SKILL.md              # Phases 2-4: Planning & decomposition
 │   ├── worker/SKILL.md                 # Phase 6: Implementation
-│   ├── reviewer/SKILL.md              # Phases 5 & 7: Validation & review
+│   ├── reviewer/SKILL.md              # Phase 7: Per-bead review + Phase 7.5: Full-review (5 specialist agents)
+│   │   └── references/
+│   │       ├── review-agent-prompts.md # 5 specialist agent prompts (code-quality, architecture, security, test-coverage, learnings)
+│   │       └── review-bead-template.md # Review finding bead format (P1/P2/P3)
+│   ├── validating/                     # Phase 5: Pre-execution verification
+│   │   ├── SKILL.md
+│   │   └── references/
+│   │       ├── plan-checker-prompt.md  # 8-dimension structural checker
+│   │       └── bead-reviewer-prompt.md # Fresh-eyes bead quality review
+│   ├── swarming/                       # Phase 6: Parallel execution orchestration
+│   │   ├── SKILL.md
+│   │   └── references/
+│   │       ├── worker-spawn-template.md # Self-routing Worker spawn template
+│   │       └── message-templates.md    # beads_village messaging formats
+│   ├── compounding/                    # Phase 8: Learning flywheel
+│   │   ├── SKILL.md
+│   │   └── references/
+│   │       ├── learnings-template.md   # YAML template for learnings files
+│   │       └── learnings-retrieval-protocol.md # 5-step protocol for consuming learnings
+│   ├── debugging/SKILL.md              # Systematic debugging (triage → reproduce → diagnose → fix → learn)
+│   ├── prompt-leverage/                # Automatic prompt enhancement
+│   │   ├── SKILL.md
+│   │   └── references/
+│   │       └── framework.md            # Framework block definitions
 │   ├── cancel/SKILL.md               # Cancel active session
 │   └── doctor/SKILL.md               # Diagnose workspace health
 ├── test/
@@ -367,7 +459,9 @@ OhMyBeads/                              # Plugin root (git repo)
 │   └── history/
 │       ├── <feature>/CONTEXT.md        # Locked decisions
 │       ├── <feature>/WRAP-UP.md        # Session summary
-│       └── learnings.md                # Compounding advice
+│       └── learnings/                  # Compounding flywheel
+│           ├── critical-patterns.md    # Promoted critical learnings (read at session start)
+│           └── YYYYMMDD-<slug>.md      # Per-feature structured learnings
 ├── AGENTS.md                           # This file
 └── .gitignore
 ```

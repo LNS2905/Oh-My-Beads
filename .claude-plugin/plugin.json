@@ -12,5 +12,7 @@
   "keywords": ["claude-code", "plugin", "multi-agent", "orchestration", "beads-village", "task-management"],
   "skills": "./skills/",
   "agents": "./agents/",
+  "hooks": "./hooks/hooks.json",
+  "setup": "./skills/setup/SKILL.md",
   "mcpServers": "./.mcp.json"
 }

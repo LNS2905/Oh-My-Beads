@@ -13,6 +13,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, readdirSync } from "fs";
 import { join, dirname } from "path";
+import { resolveStateDir } from "./state-tools/resolve-state-dir.mjs";
 
 // --- Helpers ---
 function readJson(path) {
@@ -40,9 +41,10 @@ function writeTextFile(path, content) {
   } catch { /* best effort */ }
 }
 
-function hookOutput(additionalContext) {
+function hookOutput(additionalContext, systemMessage) {
   const output = {
     continue: true,
+    ...(systemMessage ? { systemMessage } : {}),
     hookSpecificOutput: {
       hookEventName: "PreCompact",
       ...(additionalContext ? { additionalContext } : {}),
@@ -65,7 +67,7 @@ process.stdin.on("end", () => {
   }
 
   const directory = data.cwd || data.directory || process.cwd();
-  const stateDir = join(directory, ".oh-my-beads", "state");
+  const { stateDir } = resolveStateDir(directory, data);
   const handoffsDir = join(directory, ".oh-my-beads", "handoffs");
 
   // Read current session state
@@ -139,12 +141,27 @@ process.stdin.on("end", () => {
   session.last_compaction = now;
   writeJsonAtomic(sessionFile, session);
 
-  // 4. Emit context so Claude knows about the checkpoint
+  // 4. Build systemMessage for re-injection after compaction
+  const mode = session.mode || "mr.beads";
+  const modeLabel = mode === "mr.fast" ? "Mr.Fast" : "Mr.Beads";
+  const systemMsg = [
+    `[oh-my-beads POST-COMPACTION CONTEXT]`,
+    `Mode: ${modeLabel} | Phase: ${phase} | Feature: ${feature}`,
+    `Reinforcements: ${session.reinforcement_count || 0} | Failures: ${session.failure_count || 0}`,
+    filesModified.length > 0 ? `Files modified: ${filesModified.join(", ")}` : "",
+    activeAgents.length > 0 ? `Active subagents: ${activeAgents.map(a => a.role).join(", ")}` : "",
+    ``,
+    `Resume: Read .oh-my-beads/state/session.json and .oh-my-beads/handoffs/ for full context.`,
+    mode === "mr.beads" ? `Check beads_village ls(status="ready") for next work.` : `Continue the Mr.Fast workflow.`,
+  ].filter(Boolean).join("\n");
+
+  // 5. Emit context so Claude knows about the checkpoint
   hookOutput(
     `[oh-my-beads] Pre-compaction checkpoint saved.\n` +
     `Phase: ${phase} | Feature: ${feature}\n` +
     `Files modified: ${filesModified.length} | Active subagents: ${activeAgents.length}\n` +
     `Handoff written to .oh-my-beads/handoffs/\n` +
-    `After compaction, read the handoff to resume.`
+    `After compaction, read the handoff to resume.`,
+    systemMsg
   );
 });

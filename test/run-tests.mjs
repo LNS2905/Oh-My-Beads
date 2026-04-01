@@ -2323,6 +2323,41 @@ test("mr.beads Standard includes first-principles reasoning block", () => {
   assertContains(augmented, "Understand the problem broadly first", "Standard should include deep-reasoning block");
 });
 
+// ---- SESSION START: MR.FAST RESUME ----
+
+console.log("\n=== session-start.mjs (Mr.Fast Resume) ===\n");
+
+test("session-start detects interrupted mr.fast session and offers resume", () => {
+  resetState();
+  writeState({ active: true, current_phase: "fast_execution", mode: "mr.fast", started_at: new Date().toISOString(), failure_count: 1, feature_slug: "login-fix" });
+  const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "startup" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "ACTIVE Mr.Fast SESSION", "should detect active Mr.Fast session");
+  assertContains(ctx, "fast_execution", "should show current phase");
+  assertContains(ctx, "Resume", "should offer resume option");
+  assertContains(ctx, "Cancel", "should offer cancel option");
+});
+
+test("session-start mr.fast resume shows failure count", () => {
+  resetState();
+  writeState({ active: true, current_phase: "fast_scout", mode: "mr.fast", started_at: new Date().toISOString(), failure_count: 2 });
+  const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "startup" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "Retries: 2", "should show failure count");
+});
+
+test("session-start mr.fast resume shows feature slug", () => {
+  resetState();
+  writeState({ active: true, current_phase: "fast_turbo", mode: "mr.fast", started_at: new Date().toISOString(), failure_count: 0, feature_slug: "auth-bug" });
+  const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "startup" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "Task: auth-bug", "should show feature slug");
+  assertContains(ctx, "fast_turbo", "should show turbo phase in resume");
+});
+
 // ============================================================
 // SUMMARY
 // ============================================================

@@ -145,15 +145,6 @@ function cmdWrite(args) {
 
   writeJsonAtomic(path, existing);
 
-  // Also write to legacy path for backward compat
-  const legacyBase = getLegacyBaseDir(cwd);
-  try {
-    const legacyPath = sessionId && sessionId !== "legacy" && sessionId !== "root"
-      ? join(legacyBase, "sessions", sessionId, "session.json")
-      : join(legacyBase, "session.json");
-    writeJsonAtomic(legacyPath, existing);
-  } catch { /* best effort */ }
-
   process.stdout.write(JSON.stringify({
     success: true,
     session_id: sessionId || "root",
@@ -243,13 +234,6 @@ function cmdClear(args) {
   // Clear system-level root
   for (const f of files) {
     const p = join(projectRoot, f);
-    if (existsSync(p)) { rmSync(p, { force: true }); cleared.push(p); }
-  }
-
-  // Also clear legacy
-  const legacyBase = getLegacyBaseDir(cwd);
-  for (const f of files) {
-    const p = join(legacyBase, f);
     if (existsSync(p)) { rmSync(p, { force: true }); cleared.push(p); }
   }
 

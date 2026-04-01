@@ -1939,6 +1939,108 @@ test("hookOutput omits additionalContext when null", () => {
   assert(!parsed.hookSpecificOutput.additionalContext, "should not have additionalContext when null");
 });
 
+// ---- DEAD CODE REMOVAL: SYSTEM-LEVEL-ONLY WRITES ----
+
+console.log("\n=== Dead Code Removal: System-Level-Only Writes ===\n");
+
+test("keyword-detector writes session state to system-level only (not legacy)", () => {
+  resetState();
+  // Remove any pre-existing legacy state
+  const legacySession = join(TEMP_DIR, ".oh-my-beads", "state", "session.json");
+  rmSync(legacySession, { force: true });
+  // Trigger keyword detection
+  runScript("keyword-detector.mjs", { query: "omb build feature X" });
+  // Verify system-level state exists
+  const systemSession = join(STATE_DIR, "session.json");
+  assert(existsSync(systemSession), "system-level session.json should exist after keyword detection");
+  const sysData = JSON.parse(readFileSync(systemSession, "utf8"));
+  assert(sysData.active === true, "system-level session should be active");
+  assert(sysData.mode === "mr.beads", "mode should be mr.beads");
+  // Verify legacy path was NOT written
+  assert(!existsSync(legacySession), "legacy session.json should NOT exist (no dual-write)");
+});
+
+test("keyword-detector cancel writes signal to system-level only (not legacy)", () => {
+  resetState();
+  // Set up active session at system-level
+  writeFileSync(
+    join(STATE_DIR, "session.json"),
+    JSON.stringify({ active: true, current_phase: "phase_2_planning", started_at: new Date().toISOString() })
+  );
+  // Remove any legacy cancel signal
+  const legacySignal = join(TEMP_DIR, ".oh-my-beads", "state", "cancel-signal.json");
+  rmSync(legacySignal, { force: true });
+  // Trigger cancel
+  runScript("keyword-detector.mjs", { query: "cancel omb" });
+  // Verify system-level cancel signal exists
+  const systemSignal = join(STATE_DIR, "cancel-signal.json");
+  assert(existsSync(systemSignal), "system-level cancel-signal.json should exist");
+  // Verify legacy cancel signal was NOT written
+  assert(!existsSync(legacySignal), "legacy cancel-signal.json should NOT exist (no dual-write)");
+});
+
+test("state-bridge write command writes to system-level only (not legacy)", () => {
+  resetState();
+  // Remove any legacy state
+  const legacySession = join(TEMP_DIR, ".oh-my-beads", "state", "session.json");
+  rmSync(legacySession, { force: true });
+  // Use state-bridge to write
+  const result = runStateBridge(["write", "--phase", "phase_1_exploration", "--active", "true"]);
+  assert(result?.success === true, "state-bridge write should succeed");
+  // Verify system-level state exists
+  const systemSession = join(STATE_DIR, "session.json");
+  assert(existsSync(systemSession), "system-level session.json should exist after state-bridge write");
+  const sysData = JSON.parse(readFileSync(systemSession, "utf8"));
+  assert(sysData.current_phase === "phase_1_exploration", "phase should be phase_1_exploration");
+  // Verify legacy path was NOT written
+  assert(!existsSync(legacySession), "legacy session.json should NOT exist (no dual-write from state-bridge)");
+});
+
+// ---- DEAD CODE REMOVAL: LEGACY READ FALLBACK ----
+
+console.log("\n=== Dead Code Removal: Legacy Read Fallback ===\n");
+
+test("resolveStateDir returns legacyDir for legacy read fallback", () => {
+  // resolveStateDir is already imported at top of file via resolve-state-dir.mjs exports
+  // We test it by checking the resolvePath behavior in state-bridge (which uses same logic)
+  // The resolveStateDir function returns { stateDir, sessionId, legacyDir, projectRoot }
+  // We verify legacy read works by writing to legacy and reading via state-bridge
+  resetState();
+  // Write state ONLY to legacy path (no system-level)
+  const legacyDir = join(TEMP_DIR, ".oh-my-beads", "state");
+  mkdirSync(legacyDir, { recursive: true });
+  writeFileSync(join(legacyDir, "session.json"), JSON.stringify({
+    active: true, current_phase: "phase_2_planning",
+    started_at: new Date().toISOString(), feature_slug: "legacy-read-test",
+  }));
+  // System-level should NOT have state
+  assert(!existsSync(join(STATE_DIR, "session.json")), "system-level should be empty");
+  // Read via state-bridge — should find legacy data via read fallback
+  const result = runStateBridge(["read"]);
+  assert(result?.success === true, "state-bridge read should succeed");
+  assert(result?.data !== null, "should read data from legacy path");
+  assert(result?.data?.feature_slug === "legacy-read-test", "should read correct legacy data");
+  assert(result?.data?.current_phase === "phase_2_planning", "should read correct legacy phase");
+});
+
+test("state-bridge reads from legacy path when system-level is empty", () => {
+  resetState();
+  // Write state ONLY to legacy path (simulating old session)
+  const legacySession = join(TEMP_DIR, ".oh-my-beads", "state", "session.json");
+  mkdirSync(join(TEMP_DIR, ".oh-my-beads", "state"), { recursive: true });
+  writeFileSync(legacySession, JSON.stringify({
+    active: true, current_phase: "phase_6_execution",
+    started_at: new Date().toISOString(), feature_slug: "legacy-feature",
+  }));
+  // Verify system-level does NOT have state
+  assert(!existsSync(join(STATE_DIR, "session.json")), "system-level should be empty for this test");
+  // Read via state-bridge — should find legacy data
+  const result = runStateBridge(["read"]);
+  assert(result?.success === true, "state-bridge read should succeed");
+  assert(result?.data !== null, "should read data from legacy fallback");
+  assert(result?.data?.feature_slug === "legacy-feature", "should read correct legacy data");
+});
+
 // ============================================================
 // SUMMARY
 // ============================================================

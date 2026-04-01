@@ -153,33 +153,25 @@ async function main() {
   const legacyStateDir = resolveLegacyStateDirCjs(directory, data);
   const legacyStateFile = join(legacyStateDir, "session.json");
 
-  // Read session state — prefer whichever path has the most recently started session.
-  // System-level is primary; legacy is migration fallback. If both exist, use the newer one.
+  // Read session state — prefer system-level; legacy is migration fallback.
+  // If both exist, use the newer one. Always write to system-level only.
   const sysState = readJson(stateFile);
   const legacyState = readJson(legacyStateFile);
   let state;
-  let effectiveStateFile;
   if (!sysState && !legacyState) {
     state = null;
-    effectiveStateFile = stateFile;
   } else if (!sysState) {
     state = legacyState;
-    effectiveStateFile = legacyStateFile;
   } else if (!legacyState) {
     state = sysState;
-    effectiveStateFile = stateFile;
   } else {
     // Both exist — pick the one with the most recent started_at
     const sysTime = sysState.started_at ? new Date(sysState.started_at).getTime() : 0;
     const legTime = legacyState.started_at ? new Date(legacyState.started_at).getTime() : 0;
-    if (legTime > sysTime) {
-      state = legacyState;
-      effectiveStateFile = legacyStateFile;
-    } else {
-      state = sysState;
-      effectiveStateFile = stateFile;
-    }
+    state = legTime > sysTime ? legacyState : sysState;
   }
+  // Always write to system-level path (no legacy writes)
+  const effectiveStateFile = stateFile;
 
   // No active session → allow stop
   if (!state || !state.active) { allowStop(); return; }

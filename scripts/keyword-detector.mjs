@@ -33,11 +33,6 @@ function getStateDir() {
   return getProjectStateRoot(process.cwd());
 }
 
-// Legacy state dir for backward compat writes
-function getLegacyStateDir() {
-  return join(process.cwd(), ".oh-my-beads", "state");
-}
-
 // --- Helpers ---
 function extractPrompt(input) {
   try {
@@ -82,8 +77,6 @@ const hookOutput = (additionalContext) => {
 
 function ensureStateDirs() {
   ensureDir(getStateDir());
-  // Also ensure legacy dir for backward compat
-  try { mkdirSync(getLegacyStateDir(), { recursive: true }); } catch { /* ignore */ }
 }
 
 function writeSessionState(phase, mode = "mr.beads") {
@@ -98,8 +91,6 @@ function writeSessionState(phase, mode = "mr.beads") {
   };
   const content = JSON.stringify(state, null, 2);
   writeFileSync(join(getStateDir(), "session.json"), content);
-  // Legacy write for backward compat
-  try { writeFileSync(join(getLegacyStateDir(), "session.json"), content); } catch { /* ignore */ }
 }
 
 function clearSessionState() {
@@ -114,21 +105,17 @@ function clearSessionState() {
     };
     const signalContent = JSON.stringify(signal, null, 2);
     writeFileSync(join(stateDir, "cancel-signal.json"), signalContent);
-    // Legacy
-    try { writeFileSync(join(getLegacyStateDir(), "cancel-signal.json"), signalContent); } catch { /* ignore */ }
   } catch { /* best effort */ }
-  // Try system-level first, then legacy
-  for (const sf of [sessionFile, join(getLegacyStateDir(), "session.json")]) {
-    if (existsSync(sf)) {
-      try {
-        const state = JSON.parse(readFileSync(sf, "utf8"));
-        state.active = false;
-        state.current_phase = "cancelled";
-        state.cancelled_at = new Date().toISOString();
-        writeFileSync(sf, JSON.stringify(state, null, 2));
-      } catch {
-        rmSync(sf, { force: true });
-      }
+  // Deactivate session state (system-level only)
+  if (existsSync(sessionFile)) {
+    try {
+      const state = JSON.parse(readFileSync(sessionFile, "utf8"));
+      state.active = false;
+      state.current_phase = "cancelled";
+      state.cancelled_at = new Date().toISOString();
+      writeFileSync(sessionFile, JSON.stringify(state, null, 2));
+    } catch {
+      rmSync(sessionFile, { force: true });
     }
   }
 }

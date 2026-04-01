@@ -8,7 +8,7 @@
  * is active and not complete, it BLOCKS the stop and tells Claude
  * to continue to the next phase.
  *
- * This is what makes the 8-step workflow autonomous.
+ * This is what makes the 7-step workflow autonomous.
  *
  * Claude Code Stop hook input schema:
  *   - hook_event_name: 'Stop'
@@ -67,19 +67,19 @@ const TERMINAL_PHASES = new Set([
 ]);
 
 const PHASE_CONTINUATIONS = {
-  // Mr.Beads phases (8-step workflow)
+  // Mr.Beads phases (7-step workflow)
   "bootstrap":                "Continue to Phase 1: Spawn Scout for requirements exploration.",
   "phase_1_exploration":      "Continue Phase 1: Scout is clarifying requirements. Wait for CONTEXT.md.",
   "gate_1_pending":           "HITL Gate 1: Present locked decisions to user for approval.",
-  "phase_2_planning":         "Continue Phase 2: Architect is drafting the implementation plan.",
+  "phase_2_planning":         "Continue Phase 2: Architect is drafting the implementation plan. Persist plan after Gate 2 approval.",
   "gate_2_pending":           "HITL Gate 2: Present plan to user for approval or feedback.",
-  "phase_3_persistence":      "Continue Phase 3: Write approved plan to .oh-my-beads/plans/plan.md.",
-  "phase_4_decomposition":    "Continue Phase 4: Architect is decomposing plan into beads.",
-  "phase_5_validation":       "Continue Phase 5: Reviewer is validating bead descriptions.",
+  "phase_3_decomposition":    "Continue Phase 3: Architect is decomposing plan into beads for current phase.",
+  "phase_4_validation":       "Continue Phase 4: Validating skill is verifying bead descriptions.",
   "gate_3_pending":           "HITL Gate 3: Ask user to choose Sequential or Parallel execution.",
-  "phase_6_execution":        "Continue Phase 6: Workers are implementing beads. Check ls(status='ready') for next bead.",
-  "phase_7_review":           "Continue Phase 7: Reviewer is verifying bead implementation.",
-  "phase_8_summary":          "Continue Phase 8: Generate final summary, write WRAP-UP.md, update learnings.",
+  "phase_5_execution":        "Continue Phase 5: Workers are implementing beads. Check ls(status='ready') for next bead.",
+  "phase_6_review":           "Continue Phase 6: Reviewer is verifying bead implementation.",
+  "phase_6_5_full_review":    "Continue Phase 6.5: Full review with specialist agents. Check for P1 findings.",
+  "phase_7_summary":          "Continue Phase 7: Generate final summary, write WRAP-UP.md, update learnings.",
   // Mr.Fast phases (lightweight workflow)
   "fast_bootstrap":           "Continue Mr.Fast: Spawn Fast Scout for rapid analysis.",
   "fast_scout":               "Continue Mr.Fast: Scout is analyzing the issue. Wait for analysis summary.",
@@ -219,7 +219,7 @@ async function main() {
   const feature = state.feature_slug ? ` Feature: ${state.feature_slug}.` : "";
   const mode = state.mode || "mr.beads";
   const modeLabel = mode === "mr.fast" ? "Mr.Fast" : "Oh-My-Beads (Mr.Beads)";
-  const workflowDesc = mode === "mr.fast" ? "The Mr.Fast workflow is active." : "The 8-step workflow is active.";
+  const workflowDesc = mode === "mr.fast" ? "The Mr.Fast workflow is active." : "The 7-step workflow is active.";
 
   blockStop(
     `[${modeLabel.toUpperCase()} — Phase: ${phase} | Reinforcement ${count}/${MAX_REINFORCEMENTS}] ` +

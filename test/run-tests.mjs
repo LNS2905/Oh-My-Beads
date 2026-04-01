@@ -278,14 +278,14 @@ test("blocks stop when session is active", () => {
 
 test("blocks with correct phase in message", () => {
   writeState({
-    active: true, current_phase: "phase_6_execution",
+    active: true, current_phase: "phase_5_execution",
     started_at: new Date().toISOString(),
     last_checked_at: new Date().toISOString(),
     reinforcement_count: 0,
   });
   const { output } = runScript("persistent-mode.cjs", { cwd: TEMP_DIR });
   const parsed = parseOutput(output);
-  assertContains(parsed?.reason || "", "phase_6_execution", "should include phase");
+  assertContains(parsed?.reason || "", "phase_5_execution", "should include phase");
 });
 
 test("allows stop when phase is complete", () => {
@@ -318,7 +318,7 @@ test("allows stop for 'cancelled' phase", () => {
 
 test("blocks stop with real CC stop hook format (stop_hook_active)", () => {
   writeState({
-    active: true, current_phase: "phase_6_execution",
+    active: true, current_phase: "phase_5_execution",
     started_at: new Date().toISOString(),
     last_checked_at: new Date().toISOString(),
     reinforcement_count: 0,
@@ -334,7 +334,7 @@ test("blocks stop with real CC stop hook format (stop_hook_active)", () => {
 });
 
 test("allows stop when cancel_requested is set", () => {
-  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString(), cancel_requested: true });
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString(), cancel_requested: true });
   const { output } = runScript("persistent-mode.cjs", { cwd: TEMP_DIR });
   const parsed = parseOutput(output);
   assert(!parsed?.decision || parsed.decision !== "block", "should allow stop on cancel_requested");
@@ -342,7 +342,7 @@ test("allows stop when cancel_requested is set", () => {
 
 test("allows stop when cancel-signal.json has valid TTL", () => {
   writeState({
-    active: true, current_phase: "phase_6_execution",
+    active: true, current_phase: "phase_5_execution",
     started_at: new Date().toISOString(),
     last_checked_at: new Date().toISOString(),
     reinforcement_count: 0,
@@ -358,7 +358,7 @@ test("allows stop when cancel-signal.json has valid TTL", () => {
 
 test("blocks stop when cancel-signal.json is expired", () => {
   writeState({
-    active: true, current_phase: "phase_6_execution",
+    active: true, current_phase: "phase_5_execution",
     started_at: new Date().toISOString(),
     last_checked_at: new Date().toISOString(),
     reinforcement_count: 0,
@@ -387,7 +387,7 @@ test("allows stop when awaiting_confirmation is true", () => {
 
 test("increments reinforcement_count on block", () => {
   writeState({
-    active: true, current_phase: "phase_4_decomposition",
+    active: true, current_phase: "phase_3_decomposition",
     started_at: new Date().toISOString(),
     last_checked_at: new Date().toISOString(),
     reinforcement_count: 5,
@@ -399,7 +399,7 @@ test("increments reinforcement_count on block", () => {
 
 test("circuit breaker at max reinforcements (50)", () => {
   writeState({
-    active: true, current_phase: "phase_6_execution",
+    active: true, current_phase: "phase_5_execution",
     started_at: new Date().toISOString(),
     last_checked_at: new Date().toISOString(),
     reinforcement_count: 50,
@@ -415,7 +415,7 @@ test("circuit breaker at max reinforcements (50)", () => {
 test("stale session (>2hrs) allows stop", () => {
   const twoHoursAgo = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
   writeState({
-    active: true, current_phase: "phase_3_persistence",
+    active: true, current_phase: "phase_3_decomposition",
     started_at: twoHoursAgo,
     last_checked_at: twoHoursAgo,
     reinforcement_count: 0,
@@ -437,7 +437,7 @@ test("passes through when no active session", () => {
 });
 
 test("detects TypeScript errors", () => {
-  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
   const { output } = runScript("post-tool-verifier.mjs", {
     cwd: TEMP_DIR, tool_name: "Bash",
     tool_output: "error TS2345: Argument of type string is not assignable...",
@@ -447,7 +447,7 @@ test("detects TypeScript errors", () => {
 });
 
 test("detects npm errors", () => {
-  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
   const { output } = runScript("post-tool-verifier.mjs", {
     cwd: TEMP_DIR, tool_name: "Bash", tool_output: "npm ERR! code ERESOLVE\nnpm ERR! ERESOLVE unable to resolve dependency tree",
   });
@@ -456,7 +456,7 @@ test("detects npm errors", () => {
 });
 
 test("detects build failures", () => {
-  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
   const { output } = runScript("post-tool-verifier.mjs", {
     cwd: TEMP_DIR, tool_name: "Bash", tool_output: "Build failed with 3 errors",
   });
@@ -465,7 +465,7 @@ test("detects build failures", () => {
 });
 
 test("passes through successful Bash output", () => {
-  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
   const { output } = runScript("post-tool-verifier.mjs", {
     cwd: TEMP_DIR, tool_name: "Bash", tool_output: "Tests passed: 42\nAll good!",
   });
@@ -474,7 +474,7 @@ test("passes through successful Bash output", () => {
 });
 
 test("tracks file modifications from Write tool", () => {
-  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
   rmSync(join(STATE_DIR, "tool-tracking.json"), { force: true });
   runScript("post-tool-verifier.mjs", {
     cwd: TEMP_DIR, tool_name: "Write", tool_input: { file_path: "/tmp/test.ts" }, tool_output: "File written",
@@ -484,7 +484,7 @@ test("tracks file modifications from Write tool", () => {
 });
 
 test("tracks file modifications from Edit tool", () => {
-  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
   rmSync(join(STATE_DIR, "tool-tracking.json"), { force: true });
   runScript("post-tool-verifier.mjs", {
     cwd: TEMP_DIR, tool_name: "Edit", tool_input: { file_path: "/tmp/edit.ts" }, tool_output: "Edited",
@@ -494,7 +494,7 @@ test("tracks file modifications from Edit tool", () => {
 });
 
 test("increments failure counter in session state", () => {
-  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString(), failure_count: 2 });
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString(), failure_count: 2 });
   runScript("post-tool-verifier.mjs", {
     cwd: TEMP_DIR, tool_name: "Bash", tool_output: "SyntaxError: Unexpected token",
   });
@@ -737,7 +737,7 @@ console.log("\n=== pre-compact.mjs ===\n");
 test("writes checkpoint on active session", () => {
   resetState();
   writeState({
-    active: true, current_phase: "phase_6_execution",
+    active: true, current_phase: "phase_5_execution",
     started_at: new Date().toISOString(), feature_slug: "compact-test",
   });
   const { output } = runScript("pre-compact.mjs", { cwd: TEMP_DIR });
@@ -758,18 +758,18 @@ test("skips checkpoint when no active session", () => {
 
 test("writes handoff markdown", () => {
   resetState();
-  writeState({ active: true, current_phase: "phase_4_decomposition", started_at: new Date().toISOString() });
+  writeState({ active: true, current_phase: "phase_3_decomposition", started_at: new Date().toISOString() });
   runScript("pre-compact.mjs", { cwd: TEMP_DIR });
   const handoffs = readdirSync(HANDOFFS_DIR).filter(f => f.startsWith("pre-compact-"));
   assert(handoffs.length > 0, "handoff file should exist");
   const content = readFileSync(join(HANDOFFS_DIR, handoffs[0]), "utf8");
-  assertContains(content, "phase_4_decomposition", "handoff contains phase");
+  assertContains(content, "phase_3_decomposition", "handoff contains phase");
 });
 
 test("includes systemMessage for post-compaction re-injection", () => {
   resetState();
   writeState({
-    active: true, current_phase: "phase_6_execution", mode: "mr.beads",
+    active: true, current_phase: "phase_5_execution", mode: "mr.beads",
     started_at: new Date().toISOString(), feature_slug: "sysmsg-test",
   });
   const { output } = runScript("pre-compact.mjs", { cwd: TEMP_DIR });
@@ -786,29 +786,29 @@ console.log("\n=== session-start.mjs (Post-Compaction) ===\n");
 
 test("post-compaction resume loads checkpoint context", () => {
   resetState();
-  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString(), feature_slug: "resume-test" });
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString(), feature_slug: "resume-test" });
   // Write a checkpoint (simulates pre-compact hook having run) to system-level path
   writeFileSync(
     join(STATE_DIR, "checkpoint.json"),
-    JSON.stringify({ checkpointed_at: new Date().toISOString(), phase: "phase_6_execution", feature: "resume-test", reinforcement_count: 3 })
+    JSON.stringify({ checkpointed_at: new Date().toISOString(), phase: "phase_5_execution", feature: "resume-test", reinforcement_count: 3 })
   );
   const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "compact" });
   const parsed = parseOutput(output);
   assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "POST-COMPACTION RESUME", "should detect compact source");
-  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "phase_6_execution", "should include phase");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "phase_5_execution", "should include phase");
   assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "resume-test", "should include feature");
 });
 
 test("post-compaction resume loads latest handoff", () => {
   resetState();
-  writeState({ active: true, current_phase: "phase_4_decomposition", started_at: new Date().toISOString() });
+  writeState({ active: true, current_phase: "phase_3_decomposition", started_at: new Date().toISOString() });
   writeFileSync(
     join(STATE_DIR, "checkpoint.json"),
-    JSON.stringify({ checkpointed_at: new Date().toISOString(), phase: "phase_4_decomposition" })
+    JSON.stringify({ checkpointed_at: new Date().toISOString(), phase: "phase_3_decomposition" })
   );
   writeFileSync(
     join(HANDOFFS_DIR, "pre-compact-123.md"),
-    "## Handoff\n\n**Phase:** phase_4_decomposition\nCritical info here."
+    "## Handoff\n\n**Phase:** phase_3_decomposition\nCritical info here."
   );
   const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "compact" });
   const parsed = parseOutput(output);
@@ -1395,7 +1395,7 @@ test("deactivates non-critical active session on end", () => {
 test("preserves critical phase session on end", () => {
   resetState();
   writeState({
-    active: true, current_phase: "phase_6_execution",
+    active: true, current_phase: "phase_5_execution",
     started_at: new Date().toISOString(),
   });
   runScript("session-end.mjs", { cwd: TEMP_DIR });
@@ -1414,7 +1414,7 @@ test("does nothing when no active session", () => {
 
 test("cleans up last-tool-error.json", () => {
   resetState();
-  writeState({ active: true, current_phase: "phase_3_persistence", started_at: new Date().toISOString() });
+  writeState({ active: true, current_phase: "phase_3_decomposition", started_at: new Date().toISOString() });
   writeFileSync(
     join(STATE_DIR, "last-tool-error.json"),
     JSON.stringify({ tool_name: "Bash", retry_count: 3 })
@@ -1439,7 +1439,7 @@ test("passes through when no active session", () => {
 test("passes through for normal stop (no context pressure)", () => {
   resetState();
   writeState({
-    active: true, current_phase: "phase_6_execution",
+    active: true, current_phase: "phase_5_execution",
     started_at: new Date().toISOString(),
   });
   const { output } = runScript("context-guard-stop.mjs", { cwd: TEMP_DIR });
@@ -1534,7 +1534,7 @@ test("still detects keywords without worker env vars", () => {
 console.log("\n=== post-tool-verifier.mjs (Output Clipping) ===\n");
 
 test("clips output exceeding MAX_OUTPUT_CHARS", () => {
-  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
   const bigOutput = "x".repeat(15000);
   const { output } = runScript("post-tool-verifier.mjs", { cwd: TEMP_DIR, tool_name: "Bash", tool_output: bigOutput });
   const parsed = parseOutput(output);
@@ -1542,14 +1542,14 @@ test("clips output exceeding MAX_OUTPUT_CHARS", () => {
 });
 
 test("passes through output under MAX_OUTPUT_CHARS", () => {
-  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
   const { output } = runScript("post-tool-verifier.mjs", { cwd: TEMP_DIR, tool_name: "Bash", tool_output: "All tests passed" });
   const parsed = parseOutput(output);
   assert(!parsed?.hookSpecificOutput?.additionalContext, "should not clip small output");
 });
 
 test("respects OMB_MAX_OUTPUT_CHARS env override", () => {
-  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
   const mediumOutput = "y".repeat(600);
   const { output } = runScript("post-tool-verifier.mjs", { cwd: TEMP_DIR, tool_name: "Bash", tool_output: mediumOutput }, { OMB_MAX_OUTPUT_CHARS: "500" });
   const parsed = parseOutput(output);
@@ -1567,7 +1567,7 @@ test("writes tracking to session-scoped path when session_id provided", () => {
   mkdirSync(scopedDir, { recursive: true });
   writeFileSync(
     join(scopedDir, "session.json"),
-    JSON.stringify({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() })
+    JSON.stringify({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() })
   );
   runScript("post-tool-verifier.mjs", {
     cwd: TEMP_DIR, session_id: "test-session-123",
@@ -1581,7 +1581,7 @@ test("writes tracking to session-scoped path when session_id provided", () => {
 
 test("falls back to legacy path without session_id", () => {
   resetState();
-  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
   runScript("post-tool-verifier.mjs", {
     cwd: TEMP_DIR, tool_name: "Write", tool_input: { file_path: "/tmp/legacy-test.ts" }, tool_output: "Written",
   });
@@ -1629,13 +1629,13 @@ test("shows idle when no session exists", () => {
 test("shows Mr.Beads mode and phase", () => {
   resetState();
   writeState({
-    active: true, mode: "mr.beads", current_phase: "phase_6_execution",
+    active: true, mode: "mr.beads", current_phase: "phase_5_execution",
     started_at: new Date().toISOString(), reinforcement_count: 3, failure_count: 1,
   });
   const output = runStatusline({ cwd: TEMP_DIR });
   const clean = stripAnsi(output);
   assertContains(clean, "Mr.Beads", "should show Mr.Beads mode");
-  assertContains(clean, "Phase 6: Execution", "should show phase");
+  assertContains(clean, "Phase 5: Execution", "should show phase");
   assertContains(clean, "reinforcements:3", "should show reinforcement count");
   assertContains(clean, "failures:1", "should show failure count");
 });
@@ -1672,7 +1672,7 @@ test("shows context window percentage from stdin", () => {
 test("shows context warning at 75%", () => {
   resetState();
   writeState({
-    active: true, mode: "mr.beads", current_phase: "phase_6_execution",
+    active: true, mode: "mr.beads", current_phase: "phase_5_execution",
     started_at: new Date().toISOString(),
   });
   const output = runStatusline({
@@ -1688,7 +1688,7 @@ test("shows context warning at 75%", () => {
 test("shows COMPRESS? at 80%", () => {
   resetState();
   writeState({
-    active: true, mode: "mr.beads", current_phase: "phase_6_execution",
+    active: true, mode: "mr.beads", current_phase: "phase_5_execution",
     started_at: new Date().toISOString(),
   });
   const output = runStatusline({
@@ -1702,7 +1702,7 @@ test("shows COMPRESS? at 80%", () => {
 test("shows CRITICAL at 90%", () => {
   resetState();
   writeState({
-    active: true, mode: "mr.beads", current_phase: "phase_6_execution",
+    active: true, mode: "mr.beads", current_phase: "phase_5_execution",
     started_at: new Date().toISOString(),
   });
   const output = runStatusline({
@@ -1718,7 +1718,7 @@ test("shows session duration", () => {
   resetState();
   const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   writeState({
-    active: true, mode: "mr.beads", current_phase: "phase_6_execution",
+    active: true, mode: "mr.beads", current_phase: "phase_5_execution",
     started_at: fiveMinAgo,
   });
   const output = runStatusline({ cwd: TEMP_DIR });
@@ -1730,7 +1730,7 @@ test("shows session duration", () => {
 test("shows beads progress when beads_created > 0", () => {
   resetState();
   writeState({
-    active: true, mode: "mr.beads", current_phase: "phase_6_execution",
+    active: true, mode: "mr.beads", current_phase: "phase_5_execution",
     started_at: new Date().toISOString(), beads_created: 8, beads_closed: 3,
   });
   const output = runStatusline({ cwd: TEMP_DIR });
@@ -1752,7 +1752,7 @@ test("hides beads when beads_created is 0", () => {
 test("shows active agents from subagent-tracking.json", () => {
   resetState();
   writeState({
-    active: true, mode: "mr.beads", current_phase: "phase_6_execution",
+    active: true, mode: "mr.beads", current_phase: "phase_5_execution",
     started_at: new Date().toISOString(),
   });
   writeFileSync(
@@ -1776,7 +1776,7 @@ test("shows active agents from subagent-tracking.json", () => {
 test("shows files count from tool-tracking.json", () => {
   resetState();
   writeState({
-    active: true, mode: "mr.beads", current_phase: "phase_6_execution",
+    active: true, mode: "mr.beads", current_phase: "phase_5_execution",
     started_at: new Date().toISOString(),
   });
   writeFileSync(
@@ -1842,7 +1842,7 @@ test("gate phases show as yellow", () => {
 test("uses non-breaking spaces in raw output", () => {
   resetState();
   writeState({
-    active: true, mode: "mr.beads", current_phase: "phase_6_execution",
+    active: true, mode: "mr.beads", current_phase: "phase_5_execution",
     started_at: new Date().toISOString(),
   });
   // Run without stripping non-breaking spaces
@@ -2030,7 +2030,7 @@ test("state-bridge reads from legacy path when system-level is empty", () => {
   const legacySession = join(TEMP_DIR, ".oh-my-beads", "state", "session.json");
   mkdirSync(join(TEMP_DIR, ".oh-my-beads", "state"), { recursive: true });
   writeFileSync(legacySession, JSON.stringify({
-    active: true, current_phase: "phase_6_execution",
+    active: true, current_phase: "phase_5_execution",
     started_at: new Date().toISOString(), feature_slug: "legacy-feature",
   }));
   // Verify system-level does NOT have state
@@ -2129,7 +2129,7 @@ test("consolidated SubagentStop passes for unknown role", () => {
 console.log("\n=== OMB_QUIET Levels ===\n");
 
 test("OMB_QUIET=0 (default) includes informational output in post-tool-verifier", () => {
-  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
   const bigOutput = "x".repeat(15000);
   const { output } = runScript("post-tool-verifier.mjs", {
     cwd: TEMP_DIR, tool_name: "Bash", tool_output: bigOutput,
@@ -2140,7 +2140,7 @@ test("OMB_QUIET=0 (default) includes informational output in post-tool-verifier"
 });
 
 test("OMB_QUIET=1 suppresses informational output in post-tool-verifier", () => {
-  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
   const bigOutput = "x".repeat(15000);
   const { output } = runScript("post-tool-verifier.mjs", {
     cwd: TEMP_DIR, tool_name: "Bash", tool_output: bigOutput,
@@ -2151,7 +2151,7 @@ test("OMB_QUIET=1 suppresses informational output in post-tool-verifier", () => 
 });
 
 test("OMB_QUIET=2 suppresses warning output in pre-tool-enforcer", () => {
-  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
   // git push --force normally produces a WARNING
   const { output } = runScript("pre-tool-enforcer.mjs", {
     tool_name: "Bash", tool_input: { command: "git push --force origin main" },
@@ -2163,7 +2163,7 @@ test("OMB_QUIET=2 suppresses warning output in pre-tool-enforcer", () => {
 });
 
 test("OMB_QUIET=2 still emits blocks in pre-tool-enforcer (critical)", () => {
-  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
   // rm -rf / should ALWAYS be blocked regardless of quiet level
   const { output } = runScript("pre-tool-enforcer.mjs", {
     tool_name: "Bash", tool_input: { command: "rm -rf / " },
@@ -2676,6 +2676,302 @@ test("SubagentStop detects executor role from agent_type", () => {
   const parsed = parseOutput(output);
   assert(parsed?.continue === true, "should continue");
   assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "executor", "should detect executor from agent_type");
+});
+
+// ---- PHASE RENUMBERING: PERSISTENT-MODE ----
+
+console.log("\n=== persistent-mode.cjs (Phase Renumbering) ===\n");
+
+test("blocks stop during phase_3_decomposition", () => {
+  writeState({
+    active: true, current_phase: "phase_3_decomposition", mode: "mr.beads",
+    started_at: new Date().toISOString(),
+    last_checked_at: new Date().toISOString(),
+    reinforcement_count: 0,
+  });
+  const { output } = runScript("persistent-mode.cjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.decision === "block", "should block stop during phase_3_decomposition");
+  assertContains(parsed?.reason || "", "phase_3_decomposition", "should mention phase_3_decomposition");
+  assertContains(parsed?.reason || "", "Phase 3", "continuation should reference Phase 3");
+});
+
+test("blocks stop during phase_4_validation", () => {
+  writeState({
+    active: true, current_phase: "phase_4_validation", mode: "mr.beads",
+    started_at: new Date().toISOString(),
+    last_checked_at: new Date().toISOString(),
+    reinforcement_count: 0,
+  });
+  const { output } = runScript("persistent-mode.cjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.decision === "block", "should block stop during phase_4_validation");
+  assertContains(parsed?.reason || "", "phase_4_validation", "should mention phase_4_validation");
+});
+
+test("blocks stop during phase_5_execution", () => {
+  writeState({
+    active: true, current_phase: "phase_5_execution", mode: "mr.beads",
+    started_at: new Date().toISOString(),
+    last_checked_at: new Date().toISOString(),
+    reinforcement_count: 0,
+  });
+  const { output } = runScript("persistent-mode.cjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.decision === "block", "should block stop during phase_5_execution");
+  assertContains(parsed?.reason || "", "phase_5_execution", "should mention phase_5_execution");
+});
+
+test("blocks stop during phase_6_review", () => {
+  writeState({
+    active: true, current_phase: "phase_6_review", mode: "mr.beads",
+    started_at: new Date().toISOString(),
+    last_checked_at: new Date().toISOString(),
+    reinforcement_count: 0,
+  });
+  const { output } = runScript("persistent-mode.cjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.decision === "block", "should block stop during phase_6_review");
+  assertContains(parsed?.reason || "", "phase_6_review", "should mention phase_6_review");
+});
+
+test("blocks stop during phase_6_5_full_review", () => {
+  writeState({
+    active: true, current_phase: "phase_6_5_full_review", mode: "mr.beads",
+    started_at: new Date().toISOString(),
+    last_checked_at: new Date().toISOString(),
+    reinforcement_count: 0,
+  });
+  const { output } = runScript("persistent-mode.cjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.decision === "block", "should block stop during phase_6_5_full_review");
+  assertContains(parsed?.reason || "", "phase_6_5_full_review", "should mention phase_6_5_full_review");
+  assertContains(parsed?.reason || "", "Full review", "continuation should reference Full review");
+});
+
+test("blocks stop during phase_7_summary", () => {
+  writeState({
+    active: true, current_phase: "phase_7_summary", mode: "mr.beads",
+    started_at: new Date().toISOString(),
+    last_checked_at: new Date().toISOString(),
+    reinforcement_count: 0,
+  });
+  const { output } = runScript("persistent-mode.cjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.decision === "block", "should block stop during phase_7_summary");
+  assertContains(parsed?.reason || "", "phase_7_summary", "should mention phase_7_summary");
+});
+
+test("no phase_3_persistence in PHASE_CONTINUATIONS", () => {
+  // persistent-mode should NOT recognize phase_3_persistence (removed phase)
+  writeState({
+    active: true, current_phase: "phase_3_persistence", mode: "mr.beads",
+    started_at: new Date().toISOString(),
+    last_checked_at: new Date().toISOString(),
+    reinforcement_count: 0,
+  });
+  const { output } = runScript("persistent-mode.cjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  // It will still block (unknown phase is still active), but continuation won't mention "Phase 3: Write"
+  assert(parsed?.decision === "block", "should still block (session is active)");
+  assertNotContains(parsed?.reason || "", "Write approved plan", "should NOT have old phase_3_persistence continuation");
+});
+
+test("persistent-mode mentions 7-step workflow for Mr.Beads", () => {
+  writeState({
+    active: true, current_phase: "phase_5_execution", mode: "mr.beads",
+    started_at: new Date().toISOString(),
+    last_checked_at: new Date().toISOString(),
+    reinforcement_count: 0,
+  });
+  const { output } = runScript("persistent-mode.cjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.reason || "", "7-step", "should mention 7-step workflow (not 8-step)");
+});
+
+// ---- PHASE RENUMBERING: STATUSLINE ----
+
+console.log("\n=== statusline.mjs (Phase Renumbering) ===\n");
+
+test("statusline shows Phase 3: Decomposition", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_3_decomposition",
+    started_at: new Date().toISOString(),
+  });
+  const output = runStatusline({ cwd: TEMP_DIR });
+  const clean = stripAnsi(output);
+  assertContains(clean, "Phase 3: Decomposition", "should show Phase 3: Decomposition");
+});
+
+test("statusline shows Phase 4: Validation", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_4_validation",
+    started_at: new Date().toISOString(),
+  });
+  const output = runStatusline({ cwd: TEMP_DIR });
+  const clean = stripAnsi(output);
+  assertContains(clean, "Phase 4: Validation", "should show Phase 4: Validation");
+});
+
+test("statusline shows Phase 5: Execution", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_5_execution",
+    started_at: new Date().toISOString(),
+  });
+  const output = runStatusline({ cwd: TEMP_DIR });
+  const clean = stripAnsi(output);
+  assertContains(clean, "Phase 5: Execution", "should show Phase 5: Execution");
+});
+
+test("statusline shows Phase 6: Review", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_6_review",
+    started_at: new Date().toISOString(),
+  });
+  const output = runStatusline({ cwd: TEMP_DIR });
+  const clean = stripAnsi(output);
+  assertContains(clean, "Phase 6: Review", "should show Phase 6: Review");
+});
+
+test("statusline shows Phase 6.5: Full Review", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_6_5_full_review",
+    started_at: new Date().toISOString(),
+  });
+  const output = runStatusline({ cwd: TEMP_DIR });
+  const clean = stripAnsi(output);
+  assertContains(clean, "Phase 6.5: Full Review", "should show Phase 6.5: Full Review");
+});
+
+test("statusline shows Phase 7: Summary", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_7_summary",
+    started_at: new Date().toISOString(),
+  });
+  const output = runStatusline({ cwd: TEMP_DIR });
+  const clean = stripAnsi(output);
+  assertContains(clean, "Phase 7: Summary", "should show Phase 7: Summary");
+});
+
+test("statusline no longer shows Phase 3: Persistence", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_3_persistence",
+    started_at: new Date().toISOString(),
+  });
+  const output = runStatusline({ cwd: TEMP_DIR });
+  const clean = stripAnsi(output);
+  // Unknown phase should just show raw phase name, NOT "Phase 3: Persistence"
+  assertNotContains(clean, "Persistence", "should NOT show old Persistence phase display");
+});
+
+// ---- PHASE RENUMBERING: SESSION-END ----
+
+console.log("\n=== session-end.mjs (Phase Renumbering) ===\n");
+
+test("session-end preserves phase_5_execution as critical", () => {
+  resetState();
+  writeState({
+    active: true, current_phase: "phase_5_execution",
+    started_at: new Date().toISOString(),
+  });
+  runScript("session-end.mjs", { cwd: TEMP_DIR });
+  const state = readState();
+  assert(state.active === true, "phase_5_execution should remain active (critical phase)");
+});
+
+test("session-end preserves phase_6_review as critical", () => {
+  resetState();
+  writeState({
+    active: true, current_phase: "phase_6_review",
+    started_at: new Date().toISOString(),
+  });
+  runScript("session-end.mjs", { cwd: TEMP_DIR });
+  const state = readState();
+  assert(state.active === true, "phase_6_review should remain active (critical phase)");
+});
+
+test("session-end preserves phase_6_5_full_review as critical", () => {
+  resetState();
+  writeState({
+    active: true, current_phase: "phase_6_5_full_review",
+    started_at: new Date().toISOString(),
+  });
+  runScript("session-end.mjs", { cwd: TEMP_DIR });
+  const state = readState();
+  assert(state.active === true, "phase_6_5_full_review should remain active (critical phase)");
+});
+
+test("session-end deactivates phase_3_decomposition (non-critical)", () => {
+  resetState();
+  writeState({
+    active: true, current_phase: "phase_3_decomposition",
+    started_at: new Date().toISOString(),
+  });
+  runScript("session-end.mjs", { cwd: TEMP_DIR });
+  const state = readState();
+  assert(state.active === false, "phase_3_decomposition should be deactivated (non-critical)");
+});
+
+// ---- BACKWARD COMPATIBILITY: MISSING INTENT FIELD ----
+
+console.log("\n=== Backward Compatibility (Missing Intent Field) ===\n");
+
+test("persistent-mode handles session without intent field", () => {
+  writeState({
+    active: true, current_phase: "phase_5_execution", mode: "mr.beads",
+    started_at: new Date().toISOString(),
+    last_checked_at: new Date().toISOString(),
+    reinforcement_count: 0,
+    // no intent field
+  });
+  const { output } = runScript("persistent-mode.cjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.decision === "block", "should block without crashing on missing intent");
+});
+
+test("session-end handles session without intent field", () => {
+  resetState();
+  writeState({
+    active: true, current_phase: "phase_2_planning",
+    started_at: new Date().toISOString(),
+    // no intent field
+  });
+  const { output } = runScript("session-end.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should continue without crashing on missing intent");
+  const state = readState();
+  assert(state.active === false, "should deactivate non-critical phase without intent");
+});
+
+test("context-guard-stop handles session without intent field", () => {
+  resetState();
+  writeState({
+    active: true, current_phase: "phase_5_execution",
+    started_at: new Date().toISOString(),
+    // no intent field
+  });
+  const { output } = runScript("context-guard-stop.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should pass through without crashing on missing intent");
+});
+
+test("statusline handles session without intent field", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_5_execution",
+    started_at: new Date().toISOString(),
+    // no intent field
+  });
+  const output = runStatusline({ cwd: TEMP_DIR });
+  const clean = stripAnsi(output);
+  assertContains(clean, "Phase 5: Execution", "should display phase without crashing on missing intent");
 });
 
 // ============================================================

@@ -59,7 +59,7 @@ process.stdin.on("end", () => {
   // Only deactivate if in a non-critical phase
   // Critical phases (execution, review) should remain resumable
   const criticalPhases = new Set([
-    "phase_6_execution", "phase_7_review", "fast_execution", "fast_turbo",
+    "phase_5_execution", "phase_6_review", "phase_6_5_full_review", "fast_execution", "fast_turbo",
   ]);
 
   if (!criticalPhases.has(session.current_phase)) {

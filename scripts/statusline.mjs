@@ -47,12 +47,12 @@ const PHASE_DISPLAY = {
   bootstrap:              "Bootstrapping",
   phase_1_exploration:    "Phase 1: Exploration",
   phase_2_planning:       "Phase 2: Planning",
-  phase_3_persistence:    "Phase 3: Persistence",
-  phase_4_decomposition:  "Phase 4: Decomposition",
-  phase_5_validation:     "Phase 5: Validation",
-  phase_6_execution:      "Phase 6: Execution",
-  phase_7_review:         "Phase 7: Review",
-  phase_8_summary:        "Phase 8: Summary",
+  phase_3_decomposition:  "Phase 3: Decomposition",
+  phase_4_validation:     "Phase 4: Validation",
+  phase_5_execution:      "Phase 5: Execution",
+  phase_6_review:         "Phase 6: Review",
+  phase_6_5_full_review:  "Phase 6.5: Full Review",
+  phase_7_summary:        "Phase 7: Summary",
   gate_1_pending:         "Gate 1: Awaiting User",
   gate_2_pending:         "Gate 2: Awaiting User",
   gate_3_pending:         "Gate 3: Awaiting User",
@@ -120,8 +120,8 @@ function getPhaseColor(phase) {
   if (phase.startsWith("gate_")) return YELLOW;
   if (phase === "complete" || phase === "completed" || phase === "fast_complete") return GREEN;
   if (phase === "cancelled" || phase === "failed") return RED;
-  if (phase === "phase_6_execution" || phase === "fast_execution" || phase === "fast_turbo") return CYAN;
-  if (phase === "phase_7_review" || phase === "phase_5_validation") return MAGENTA;
+  if (phase === "phase_5_execution" || phase === "fast_execution" || phase === "fast_turbo") return CYAN;
+  if (phase === "phase_6_review" || phase === "phase_6_5_full_review" || phase === "phase_4_validation") return MAGENTA;
   return "";
 }
 

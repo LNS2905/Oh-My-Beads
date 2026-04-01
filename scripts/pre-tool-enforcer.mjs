@@ -35,9 +35,8 @@ const BV = (name) => `mcp__beads-village__${name}`;
 
 const ROLE_RESTRICTIONS = {
   master: {
-    deny: ["Edit"],
-    msg: "Master must not write implementation code.",
-    fileRestriction: /(?:^|[/\\])\.oh-my-beads[/\\]/,
+    deny: [],
+    msg: "Master prefers delegating to sub-agents but can edit directly when needed.",
   },
   scout: {
     deny: ["Edit", BV("reserve"), BV("claim"), BV("done"), "Agent"],
@@ -123,14 +122,12 @@ function detectRole(input) {
     if (ROLE_RESTRICTIONS[normalized]) return normalized;
   }
 
-  // Heuristic: look for role identifiers in the tool call context
-  const text = typeof input === "string" ? input : JSON.stringify(input);
-  for (const role of Object.keys(ROLE_RESTRICTIONS)) {
-    const pattern = role.includes("-")
-      ? new RegExp(`\\b${role.replace("-", "[\\s_-]")}\\b`, "i")
-      : new RegExp(`\\b${role}\\b`, "i");
-    if (pattern.test(text)) return role;
-  }
+  // Priority 2: No env var → no role restriction.
+  // OMB_AGENT_ROLE env var is the ONLY reliable role indicator.
+  // Heuristics (searching prompt text, subagent_type, description) cause
+  // false matches: subagent_type describes the TARGET not the CALLER,
+  // and prompt text naturally mentions other role names.
+  // Spawned agents get their own OMB_AGENT_ROLE via agent frontmatter.
   return null;
 }
 
@@ -148,7 +145,7 @@ function extractFilePath(data) {
     ?? null;
 }
 
-function hookOutput(decision, reason) {
+function emitDecision(decision, reason) {
   if (decision === "block") {
     // Claude Code's PreToolUse engine uses hookSpecificOutput.permissionDecision
     // to enforce tool blocking. 'deny' prevents the tool from executing.
@@ -193,7 +190,7 @@ process.stdin.on("end", () => {
   try {
     data = JSON.parse(input.trim());
   } catch {
-    hookOutput("allow");
+    emitDecision("allow");
     return;
   }
 
@@ -206,13 +203,13 @@ process.stdin.on("end", () => {
     if (command) {
       for (const { pattern, reason } of BASH_BLOCKLIST) {
         if (pattern.test(command)) {
-          hookOutput("block", `${reason}. Command: ${command.substring(0, 100)}`);
+          emitDecision("block", `${reason}. Command: ${command.substring(0, 100)}`);
           return;
         }
       }
       for (const { pattern, warning } of BASH_WARNINGS) {
         if (pattern.test(command)) {
-          hookOutput("warn", warning);
+          emitDecision("warn", warning);
           return;
         }
       }
@@ -221,20 +218,20 @@ process.stdin.on("end", () => {
 
   // No role detected → allow
   if (!role) {
-    hookOutput("allow");
+    emitDecision("allow");
     return;
   }
 
   const restrictions = ROLE_RESTRICTIONS[role];
   if (!restrictions) {
-    hookOutput("allow");
+    emitDecision("allow");
     return;
   }
 
   // Check tool deny list
   const blocked = restrictions.deny.find((t) => toolName === t);
   if (blocked) {
-    hookOutput("block", `${restrictions.msg} Tool '${toolName}' is not allowed for ${role} role.`);
+    emitDecision("block", `${restrictions.msg} Tool '${toolName}' is not allowed for ${role} role.`);
     return;
   }
 
@@ -242,7 +239,7 @@ process.stdin.on("end", () => {
   if (restrictions.fileRestriction && (toolName === "Write" || toolName === "Edit")) {
     const filePath = extractFilePath(data);
     if (filePath && !restrictions.fileRestriction.test(filePath)) {
-      hookOutput("block",
+      emitDecision("block",
         `${role} can only modify allowed files matching its fileRestriction. ` +
         `Attempted: ${filePath}`
       );
@@ -250,5 +247,5 @@ process.stdin.on("end", () => {
     }
   }
 
-  hookOutput("allow");
+  emitDecision("allow");
 });

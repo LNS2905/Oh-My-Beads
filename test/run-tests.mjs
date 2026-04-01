@@ -12,11 +12,19 @@
 import { execFileSync } from "child_process";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { createHash } from "crypto";
 import { mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, readdirSync } from "fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCRIPTS_DIR = join(__dirname, "..", "scripts");
 const TEMP_DIR = join(__dirname, "..", ".test-workspace");
+
+// System-level state root for the test workspace.
+// OMB_HOME overrides getSystemRoot() so all scripts write here instead of ~/.oh-my-beads/
+const OMB_HOME = join(TEMP_DIR, ".omb-test-home");
+const PROJECT_HASH = createHash("sha256").update(TEMP_DIR).digest("hex").slice(0, 8);
+const STATE_DIR = join(OMB_HOME, "projects", PROJECT_HASH);
+const HANDOFFS_DIR = join(STATE_DIR, "handoffs");
 
 let passed = 0;
 let failed = 0;
@@ -26,6 +34,10 @@ let total = 0;
 
 function setup() {
   rmSync(TEMP_DIR, { recursive: true, force: true });
+  // System-level state dirs (scripts write here via OMB_HOME)
+  mkdirSync(STATE_DIR, { recursive: true });
+  mkdirSync(HANDOFFS_DIR, { recursive: true });
+  // Legacy dirs still needed for scripts/tests that write artifacts (plans, history, handoffs)
   mkdirSync(join(TEMP_DIR, ".oh-my-beads", "state"), { recursive: true });
   mkdirSync(join(TEMP_DIR, ".oh-my-beads", "plans"), { recursive: true });
   mkdirSync(join(TEMP_DIR, ".oh-my-beads", "history"), { recursive: true });
@@ -37,29 +49,45 @@ function teardown() {
 }
 
 function resetState() {
-  const stateDir = join(TEMP_DIR, ".oh-my-beads", "state");
+  // Clear system-level state files
   for (const f of ["session.json", "tool-tracking.json", "subagent-tracking.json", "checkpoint.json", "last-tool-error.json", "cancel-signal.json"]) {
-    rmSync(join(stateDir, f), { force: true });
+    rmSync(join(STATE_DIR, f), { force: true });
   }
-  // Clean handoffs
-  const handoffsDir = join(TEMP_DIR, ".oh-my-beads", "handoffs");
-  if (existsSync(handoffsDir)) {
-    for (const f of readdirSync(handoffsDir)) {
-      if (f !== ".gitkeep") rmSync(join(handoffsDir, f), { force: true });
+  // Clean system-level handoffs
+  if (existsSync(HANDOFFS_DIR)) {
+    for (const f of readdirSync(HANDOFFS_DIR)) {
+      if (f !== ".gitkeep") rmSync(join(HANDOFFS_DIR, f), { force: true });
+    }
+  }
+  // Also clear legacy state files (keyword-detector and persistent-mode read/write here)
+  const legacyStateDir = join(TEMP_DIR, ".oh-my-beads", "state");
+  for (const f of ["session.json", "tool-tracking.json", "subagent-tracking.json", "checkpoint.json", "last-tool-error.json", "cancel-signal.json"]) {
+    rmSync(join(legacyStateDir, f), { force: true });
+  }
+  // Clean legacy handoffs
+  const legacyHandoffsDir = join(TEMP_DIR, ".oh-my-beads", "handoffs");
+  if (existsSync(legacyHandoffsDir)) {
+    for (const f of readdirSync(legacyHandoffsDir)) {
+      if (f !== ".gitkeep") rmSync(join(legacyHandoffsDir, f), { force: true });
     }
   }
 }
 
 function writeState(data) {
-  writeFileSync(
-    join(TEMP_DIR, ".oh-my-beads", "state", "session.json"),
-    JSON.stringify(data, null, 2)
-  );
+  // Write to system-level path (used by all resolveStateDir-based scripts)
+  mkdirSync(STATE_DIR, { recursive: true });
+  writeFileSync(join(STATE_DIR, "session.json"), JSON.stringify(data, null, 2));
+  // Also write to legacy path (used by keyword-detector, persistent-mode, session-start fallback)
+  mkdirSync(join(TEMP_DIR, ".oh-my-beads", "state"), { recursive: true });
+  writeFileSync(join(TEMP_DIR, ".oh-my-beads", "state", "session.json"), JSON.stringify(data, null, 2));
 }
 
 function readState() {
-  const p = join(TEMP_DIR, ".oh-my-beads", "state", "session.json");
-  return existsSync(p) ? JSON.parse(readFileSync(p, "utf8")) : null;
+  // Prefer system-level; fall back to legacy
+  const systemPath = join(STATE_DIR, "session.json");
+  if (existsSync(systemPath)) return JSON.parse(readFileSync(systemPath, "utf8"));
+  const legacyPath = join(TEMP_DIR, ".oh-my-beads", "state", "session.json");
+  return existsSync(legacyPath) ? JSON.parse(readFileSync(legacyPath, "utf8")) : null;
 }
 
 function runScript(scriptName, inputJson, env = {}) {
@@ -70,7 +98,7 @@ function runScript(scriptName, inputJson, env = {}) {
       input,
       encoding: "utf8",
       timeout: 10_000,
-      env: { ...process.env, ...env },
+      env: { ...process.env, OMB_HOME, ...env },
       cwd: TEMP_DIR,
     });
     return { output: result, exitCode: 0 };
@@ -85,6 +113,7 @@ function runStateBridge(args) {
     const result = execFileSync(process.execPath, [scriptPath, ...args], {
       encoding: "utf8",
       timeout: 10_000,
+      env: { ...process.env, OMB_HOME },
       cwd: TEMP_DIR,
     });
     return JSON.parse(result);
@@ -178,8 +207,8 @@ test("handles cancel omb", () => {
   const state = readState();
   assert(state.active === false, "session should be deactivated");
   assert(state.current_phase === "cancelled", "phase should be cancelled");
-  // Verify cancel signal file was written
-  const signalPath = join(TEMP_DIR, ".oh-my-beads", "state", "cancel-signal.json");
+  // Verify cancel signal file was written (keyword-detector writes to system-level path)
+  const signalPath = join(STATE_DIR, "cancel-signal.json");
   assert(existsSync(signalPath), "cancel-signal.json should exist");
   const signal = JSON.parse(readFileSync(signalPath, "utf8"));
   assert(signal.expires_at, "cancel signal should have expires_at");
@@ -446,21 +475,21 @@ test("passes through successful Bash output", () => {
 
 test("tracks file modifications from Write tool", () => {
   writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
-  rmSync(join(TEMP_DIR, ".oh-my-beads", "state", "tool-tracking.json"), { force: true });
+  rmSync(join(STATE_DIR, "tool-tracking.json"), { force: true });
   runScript("post-tool-verifier.mjs", {
     cwd: TEMP_DIR, tool_name: "Write", tool_input: { file_path: "/tmp/test.ts" }, tool_output: "File written",
   });
-  const tracking = JSON.parse(readFileSync(join(TEMP_DIR, ".oh-my-beads", "state", "tool-tracking.json"), "utf8"));
+  const tracking = JSON.parse(readFileSync(join(STATE_DIR, "tool-tracking.json"), "utf8"));
   assert(tracking.files_modified.includes("/tmp/test.ts"), "should track written file");
 });
 
 test("tracks file modifications from Edit tool", () => {
   writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
-  rmSync(join(TEMP_DIR, ".oh-my-beads", "state", "tool-tracking.json"), { force: true });
+  rmSync(join(STATE_DIR, "tool-tracking.json"), { force: true });
   runScript("post-tool-verifier.mjs", {
     cwd: TEMP_DIR, tool_name: "Edit", tool_input: { file_path: "/tmp/edit.ts" }, tool_output: "Edited",
   });
-  const tracking = JSON.parse(readFileSync(join(TEMP_DIR, ".oh-my-beads", "state", "tool-tracking.json"), "utf8"));
+  const tracking = JSON.parse(readFileSync(join(STATE_DIR, "tool-tracking.json"), "utf8"));
   assert(tracking.files_modified.includes("/tmp/edit.ts"), "should track edited file");
 });
 
@@ -491,9 +520,9 @@ test("blocks Write for reviewer", () => {
   assert(parsed?.hookSpecificOutput?.permissionDecision === "deny", "should use permissionDecision: deny for engine enforcement");
 });
 
-test("blocks Edit for master", () => {
+test("allows Edit for master (restricted to .oh-my-beads/)", () => {
   const { output } = runScript("pre-tool-enforcer.mjs", { tool_name: "Edit" }, { OMB_AGENT_ROLE: "master" });
-  assertContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "master Edit");
+  assertNotContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "master Edit");
 });
 
 test("allows Read for reviewer", () => {
@@ -601,7 +630,7 @@ test("clear removes state files", () => {
   const result = runStateBridge(["clear"]);
   assert(result?.success === true, "clear should succeed");
   assert(result?.cleared?.length > 0, "should clear files");
-  assert(!existsSync(join(TEMP_DIR, ".oh-my-beads", "state", "session.json")), "session.json should be gone");
+  assert(!existsSync(join(STATE_DIR, "session.json")), "session.json should be gone");
 });
 
 test("read after clear returns null data", () => {
@@ -683,7 +712,7 @@ test("records subagent start", () => {
   });
   const parsed = parseOutput(output);
   assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "Subagent started", "start message");
-  const tracking = JSON.parse(readFileSync(join(TEMP_DIR, ".oh-my-beads", "state", "subagent-tracking.json"), "utf8"));
+  const tracking = JSON.parse(readFileSync(join(STATE_DIR, "subagent-tracking.json"), "utf8"));
   assert(tracking.agents.length === 1, "should have 1 agent");
   assert(tracking.agents[0].role === "scout", "role should be scout");
   assert(tracking.agents[0].status === "running", "status should be running");
@@ -696,7 +725,7 @@ test("records subagent stop", () => {
   });
   const parsed = parseOutput(output);
   assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "Subagent", "stop message");
-  const tracking = JSON.parse(readFileSync(join(TEMP_DIR, ".oh-my-beads", "state", "subagent-tracking.json"), "utf8"));
+  const tracking = JSON.parse(readFileSync(join(STATE_DIR, "subagent-tracking.json"), "utf8"));
   const agent = tracking.agents.find(a => a.id === "scout-001");
   assert(agent.status === "stopped", "status should be stopped");
 });
@@ -714,8 +743,8 @@ test("writes checkpoint on active session", () => {
   const { output } = runScript("pre-compact.mjs", { cwd: TEMP_DIR });
   const parsed = parseOutput(output);
   assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "Pre-compaction checkpoint", "checkpoint msg");
-  assert(existsSync(join(TEMP_DIR, ".oh-my-beads", "state", "checkpoint.json")), "checkpoint.json exists");
-  const checkpoint = JSON.parse(readFileSync(join(TEMP_DIR, ".oh-my-beads", "state", "checkpoint.json"), "utf8"));
+  assert(existsSync(join(STATE_DIR, "checkpoint.json")), "checkpoint.json exists");
+  const checkpoint = JSON.parse(readFileSync(join(STATE_DIR, "checkpoint.json"), "utf8"));
   assert(checkpoint.reason === "pre_compaction", "checkpoint reason");
   assert(checkpoint.session.feature_slug === "compact-test", "feature preserved");
 });
@@ -731,9 +760,9 @@ test("writes handoff markdown", () => {
   resetState();
   writeState({ active: true, current_phase: "phase_4_decomposition", started_at: new Date().toISOString() });
   runScript("pre-compact.mjs", { cwd: TEMP_DIR });
-  const handoffs = readdirSync(join(TEMP_DIR, ".oh-my-beads", "handoffs")).filter(f => f.startsWith("pre-compact-"));
+  const handoffs = readdirSync(HANDOFFS_DIR).filter(f => f.startsWith("pre-compact-"));
   assert(handoffs.length > 0, "handoff file should exist");
-  const content = readFileSync(join(TEMP_DIR, ".oh-my-beads", "handoffs", handoffs[0]), "utf8");
+  const content = readFileSync(join(HANDOFFS_DIR, handoffs[0]), "utf8");
   assertContains(content, "phase_4_decomposition", "handoff contains phase");
 });
 
@@ -758,9 +787,9 @@ console.log("\n=== session-start.mjs (Post-Compaction) ===\n");
 test("post-compaction resume loads checkpoint context", () => {
   resetState();
   writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString(), feature_slug: "resume-test" });
-  // Write a checkpoint (simulates pre-compact hook having run)
+  // Write a checkpoint (simulates pre-compact hook having run) to system-level path
   writeFileSync(
-    join(TEMP_DIR, ".oh-my-beads", "state", "checkpoint.json"),
+    join(STATE_DIR, "checkpoint.json"),
     JSON.stringify({ checkpointed_at: new Date().toISOString(), phase: "phase_6_execution", feature: "resume-test", reinforcement_count: 3 })
   );
   const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "compact" });
@@ -774,11 +803,11 @@ test("post-compaction resume loads latest handoff", () => {
   resetState();
   writeState({ active: true, current_phase: "phase_4_decomposition", started_at: new Date().toISOString() });
   writeFileSync(
-    join(TEMP_DIR, ".oh-my-beads", "state", "checkpoint.json"),
+    join(STATE_DIR, "checkpoint.json"),
     JSON.stringify({ checkpointed_at: new Date().toISOString(), phase: "phase_4_decomposition" })
   );
   writeFileSync(
-    join(TEMP_DIR, ".oh-my-beads", "handoffs", "pre-compact-123.md"),
+    join(HANDOFFS_DIR, "pre-compact-123.md"),
     "## Handoff\n\n**Phase:** phase_4_decomposition\nCritical info here."
   );
   const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "compact" });
@@ -800,8 +829,53 @@ test("normal startup with no session shows only banner", () => {
   resetState();
   const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "startup" });
   const parsed = parseOutput(output);
-  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "oh-my-beads v1.1.0 loaded", "should show banner");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "oh-my-beads v1.2.0 loaded", "should show banner");
   assert(!(parsed?.hookSpecificOutput?.additionalContext || "").includes("ACTIVE SESSION"), "should not show active session");
+});
+
+// ---- SESSION START: FIRST-RUN DETECTION ----
+
+console.log("\n=== session-start.mjs (First-Run Detection) ===\n");
+
+test("shows first-run banner when no setup.json exists", () => {
+  resetState();
+  // Ensure no setup.json at OMB_HOME level
+  rmSync(join(OMB_HOME, "setup.json"), { force: true });
+  const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "startup" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "[FIRST RUN]", "should show first-run banner");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "setup omb", "should suggest setup omb");
+});
+
+test("shows update banner when setupVersion is outdated", () => {
+  resetState();
+  // Write setup.json with old version
+  writeFileSync(
+    join(OMB_HOME, "setup.json"),
+    JSON.stringify({ setupCompleted: new Date().toISOString(), setupVersion: "1.0.0" })
+  );
+  const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "startup" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "[UPDATE]", "should show update banner");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "setup omb", "should suggest setup omb");
+  // Cleanup
+  rmSync(join(OMB_HOME, "setup.json"), { force: true });
+});
+
+test("no first-run banner when setupVersion matches current", () => {
+  resetState();
+  // Write setup.json with current version
+  writeFileSync(
+    join(OMB_HOME, "setup.json"),
+    JSON.stringify({ setupCompleted: new Date().toISOString(), setupVersion: "1.2.0" })
+  );
+  const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "startup" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertNotContains(ctx, "[FIRST RUN]", "should not show first-run when setup current");
+  assertNotContains(ctx, "[UPDATE]", "should not show update when setup current");
+  // Cleanup
+  rmSync(join(OMB_HOME, "setup.json"), { force: true });
 });
 
 // ---- MR.FAST MODE: KEYWORD DETECTOR ----
@@ -981,12 +1055,12 @@ test("master can Write to .oh-my-beads/ state files", () => {
   assertNotContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "master .oh-my-beads write");
 });
 
-test("master blocked from writing source code", () => {
+test("master can write source code (prefers delegation)", () => {
   const { output } = runScript("pre-tool-enforcer.mjs", {
     tool_name: "Write",
     tool_input: { file_path: "/project/src/app.ts" },
   }, { OMB_AGENT_ROLE: "master" });
-  assertContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "master source code");
+  assertNotContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "master source code");
 });
 
 test("scout can Write CONTEXT.md", () => {
@@ -1051,6 +1125,58 @@ test("exact match prevents over-blocking (WriteFile not blocked by Write deny)",
   }, { OMB_AGENT_ROLE: "reviewer" });
   // WriteFile is not in reviewer deny list (only "Write" is), so should NOT be blocked
   assertNotContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "WriteFile not blocked");
+});
+
+// ---- ROLE DETECTION: FALSE MATCH REGRESSION ----
+
+console.log("\n=== pre-tool-enforcer.mjs (Role Detection) ===\n");
+
+test("prompt text mentioning 'scout' does NOT trigger scout role", () => {
+  // Master spawns Agent with prompt that mentions "Scout" — must NOT be blocked
+  const { output } = runScript("pre-tool-enforcer.mjs", {
+    tool_name: "Agent",
+    tool_input: {
+      prompt: "Spawn Scout agent to explore requirements for the feature",
+      description: "Scout exploration",
+      subagent_type: "oh-my-beads:scout",  // subagent_type refers to the SPAWNED agent, not caller
+    },
+  });
+  // No OMB_AGENT_ROLE env → caller is Master/main session → should allow
+  assertNotContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "prompt mentioning scout");
+});
+
+test("prompt text mentioning 'reviewer' does NOT trigger reviewer role", () => {
+  const { output } = runScript("pre-tool-enforcer.mjs", {
+    tool_name: "Write",
+    tool_input: {
+      file_path: "/project/.oh-my-beads/handoffs/phase7.md",
+      content: "Reviewer approved all beads",
+    },
+  });
+  assertNotContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "prompt mentioning reviewer");
+});
+
+test("prompt text mentioning 'worker' does NOT trigger worker role", () => {
+  const { output } = runScript("pre-tool-enforcer.mjs", {
+    tool_name: "Edit",
+    tool_input: {
+      file_path: "/project/.oh-my-beads/state/session.json",
+      old_string: "phase_5",
+      new_string: "phase_6",
+    },
+    description: "Update state after Worker completed bead",
+  });
+  assertNotContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "prompt mentioning worker");
+});
+
+test("env var OMB_AGENT_ROLE takes priority over all heuristics", () => {
+  const { output } = runScript("pre-tool-enforcer.mjs", {
+    tool_name: "Write",
+    tool_input: { file_path: "/project/src/app.ts" },
+    subagent_type: "master",  // even if subagent_type says master
+  }, { OMB_AGENT_ROLE: "reviewer" });
+  // env says reviewer → blocked (reviewer can't Write)
+  assertContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "env priority over heuristic");
 });
 
 // ---- PROMPT LEVERAGE: UNIT TESTS ----
@@ -1176,7 +1302,7 @@ test("tracks first failure for a tool", () => {
   const parsed = parseOutput(output);
   assert(parsed?.continue === true, "should continue");
   assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "attempt 1", "first attempt");
-  const errorState = JSON.parse(readFileSync(join(TEMP_DIR, ".oh-my-beads", "state", "last-tool-error.json"), "utf8"));
+  const errorState = JSON.parse(readFileSync(join(STATE_DIR, "last-tool-error.json"), "utf8"));
   assert(errorState.tool_name === "Bash", "should track tool name");
   assert(errorState.retry_count === 1, "retry_count should be 1");
   assert(errorState.escalated === false, "should not be escalated yet");
@@ -1187,7 +1313,7 @@ test("increments retry count for same tool within window", () => {
   resetState();
   const now = new Date().toISOString();
   writeFileSync(
-    join(TEMP_DIR, ".oh-my-beads", "state", "last-tool-error.json"),
+    join(STATE_DIR, "last-tool-error.json"),
     JSON.stringify({ tool_name: "Bash", retry_count: 3, last_failure_at: now, error_snippet: "err", escalated: false })
   );
   const { output } = runScript("post-tool-use-failure.mjs", {
@@ -1195,7 +1321,7 @@ test("increments retry count for same tool within window", () => {
   });
   const parsed = parseOutput(output);
   assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "attempt 4", "should increment");
-  const errorState = JSON.parse(readFileSync(join(TEMP_DIR, ".oh-my-beads", "state", "last-tool-error.json"), "utf8"));
+  const errorState = JSON.parse(readFileSync(join(STATE_DIR, "last-tool-error.json"), "utf8"));
   assert(errorState.retry_count === 4, `retry_count should be 4, got ${errorState.retry_count}`);
 });
 
@@ -1203,13 +1329,13 @@ test("resets retry count for different tool", () => {
   resetState();
   const now = new Date().toISOString();
   writeFileSync(
-    join(TEMP_DIR, ".oh-my-beads", "state", "last-tool-error.json"),
+    join(STATE_DIR, "last-tool-error.json"),
     JSON.stringify({ tool_name: "Bash", retry_count: 4, last_failure_at: now, error_snippet: "err", escalated: false })
   );
   const { output } = runScript("post-tool-use-failure.mjs", {
     cwd: TEMP_DIR, tool_name: "Write", tool_error: "Permission denied",
   });
-  const errorState = JSON.parse(readFileSync(join(TEMP_DIR, ".oh-my-beads", "state", "last-tool-error.json"), "utf8"));
+  const errorState = JSON.parse(readFileSync(join(STATE_DIR, "last-tool-error.json"), "utf8"));
   assert(errorState.tool_name === "Write", "should track new tool");
   assert(errorState.retry_count === 1, `retry_count should reset to 1, got ${errorState.retry_count}`);
 });
@@ -1218,7 +1344,7 @@ test("escalates at threshold (5 retries)", () => {
   resetState();
   const now = new Date().toISOString();
   writeFileSync(
-    join(TEMP_DIR, ".oh-my-beads", "state", "last-tool-error.json"),
+    join(STATE_DIR, "last-tool-error.json"),
     JSON.stringify({ tool_name: "Bash", retry_count: 4, last_failure_at: now, error_snippet: "err", escalated: false })
   );
   const { output } = runScript("post-tool-use-failure.mjs", {
@@ -1226,7 +1352,7 @@ test("escalates at threshold (5 retries)", () => {
   });
   const parsed = parseOutput(output);
   assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "systemic issue", "escalation message");
-  const errorState = JSON.parse(readFileSync(join(TEMP_DIR, ".oh-my-beads", "state", "last-tool-error.json"), "utf8"));
+  const errorState = JSON.parse(readFileSync(join(STATE_DIR, "last-tool-error.json"), "utf8"));
   assert(errorState.escalated === true, "should be escalated");
   assert(errorState.retry_count === 5, `retry_count should be 5, got ${errorState.retry_count}`);
 });
@@ -1289,11 +1415,11 @@ test("cleans up last-tool-error.json", () => {
   resetState();
   writeState({ active: true, current_phase: "phase_3_persistence", started_at: new Date().toISOString() });
   writeFileSync(
-    join(TEMP_DIR, ".oh-my-beads", "state", "last-tool-error.json"),
+    join(STATE_DIR, "last-tool-error.json"),
     JSON.stringify({ tool_name: "Bash", retry_count: 3 })
   );
   runScript("session-end.mjs", { cwd: TEMP_DIR });
-  const errorState = JSON.parse(readFileSync(join(TEMP_DIR, ".oh-my-beads", "state", "last-tool-error.json"), "utf8"));
+  const errorState = JSON.parse(readFileSync(join(STATE_DIR, "last-tool-error.json"), "utf8"));
   assert(errorState.reason === "session_end", "should clear error state");
 });
 
@@ -1327,6 +1453,52 @@ test("allows stop on inactive session", () => {
   const { output } = runScript("context-guard-stop.mjs", { cwd: TEMP_DIR });
   const parsed = parseOutput(output);
   assert(parsed?.continue === true, "should allow stop");
+});
+
+// ---- UPDATE PLUGIN: KEYWORD DETECTOR ----
+
+console.log("\n=== keyword-detector.mjs (Update Plugin) ===\n");
+
+test("detects 'update omb' keyword", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "update omb" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "MAGIC KEYWORD: update-omb", "update omb keyword");
+});
+
+test("detects 'omb update' keyword", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "omb update" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "MAGIC KEYWORD: update-omb", "omb update keyword");
+});
+
+test("detects 'upgrade omb' keyword", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "upgrade omb" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "MAGIC KEYWORD: update-omb", "upgrade omb keyword");
+});
+
+test("update invokes correct skill", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "update omb" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "oh-my-beads:update-plugin", "correct skill");
+});
+
+test("ignores informational query about update omb", () => {
+  const { output } = runScript("keyword-detector.mjs", { query: "what does update omb do?" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext;
+  assert(!ctx || !ctx.includes("MAGIC KEYWORD"), "should not trigger on informational update query");
+});
+
+test("update does not write session state", () => {
+  resetState();
+  runScript("keyword-detector.mjs", { query: "update omb" });
+  const state = readState();
+  assert(!state || !state.active, "update should not activate a session");
 });
 
 // ---- WORKER GUARD: KEYWORD DETECTOR ----
@@ -1389,7 +1561,8 @@ console.log("\n=== post-tool-verifier.mjs (Session-Scoped State) ===\n");
 
 test("writes tracking to session-scoped path when session_id provided", () => {
   resetState();
-  const scopedDir = join(TEMP_DIR, ".oh-my-beads", "state", "sessions", "test-session-123");
+  // With OMB_HOME set, session-scoped path is STATE_DIR/sessions/{sessionId}/
+  const scopedDir = join(STATE_DIR, "sessions", "test-session-123");
   mkdirSync(scopedDir, { recursive: true });
   writeFileSync(
     join(scopedDir, "session.json"),
@@ -1411,8 +1584,359 @@ test("falls back to legacy path without session_id", () => {
   runScript("post-tool-verifier.mjs", {
     cwd: TEMP_DIR, tool_name: "Write", tool_input: { file_path: "/tmp/legacy-test.ts" }, tool_output: "Written",
   });
-  const trackingPath = join(TEMP_DIR, ".oh-my-beads", "state", "tool-tracking.json");
-  assert(existsSync(trackingPath), "legacy tool-tracking.json should exist");
+  // Without session_id, writes to STATE_DIR (system-level root for this project)
+  const trackingPath = join(STATE_DIR, "tool-tracking.json");
+  assert(existsSync(trackingPath), "tool-tracking.json should exist at system-level path");
+});
+
+// ---- STATUSLINE HUD ----
+
+console.log("\n=== statusline.mjs (OMB Hub HUD) ===\n");
+
+// Helper: run statusline with stdin JSON and optional env
+function runStatusline(stdinJson, env = {}) {
+  const scriptPath = join(SCRIPTS_DIR, "statusline.mjs");
+  const input = typeof stdinJson === "string" ? stdinJson : JSON.stringify(stdinJson);
+  try {
+    const result = execFileSync(process.execPath, [scriptPath], {
+      input,
+      encoding: "utf8",
+      timeout: 10_000,
+      env: { ...process.env, OMB_HOME, ...env },
+      cwd: TEMP_DIR,
+    });
+    // Replace non-breaking spaces back to regular spaces for assertion readability
+    return result.replace(/\u00A0/g, " ").trim();
+  } catch (err) {
+    return (err.stdout || "").replace(/\u00A0/g, " ").trim();
+  }
+}
+
+// Strip ANSI escape codes for clean text assertions
+function stripAnsi(str) {
+  return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+}
+
+test("shows idle when no session exists", () => {
+  resetState();
+  const output = runStatusline({ cwd: TEMP_DIR });
+  const clean = stripAnsi(output);
+  assertContains(clean, "[OMB#", "should have OMB label");
+  assertContains(clean, "idle", "should show idle");
+});
+
+test("shows Mr.Beads mode and phase", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_6_execution",
+    started_at: new Date().toISOString(), reinforcement_count: 3, failure_count: 1,
+  });
+  const output = runStatusline({ cwd: TEMP_DIR });
+  const clean = stripAnsi(output);
+  assertContains(clean, "Mr.Beads", "should show Mr.Beads mode");
+  assertContains(clean, "Phase 6: Execution", "should show phase");
+  assertContains(clean, "reinforcements:3", "should show reinforcement count");
+  assertContains(clean, "failures:1", "should show failure count");
+});
+
+test("shows Mr.Fast mode and phase", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.fast", current_phase: "fast_execution",
+    started_at: new Date().toISOString(), failure_count: 0,
+  });
+  const output = runStatusline({ cwd: TEMP_DIR });
+  const clean = stripAnsi(output);
+  assertContains(clean, "Mr.Fast", "should show Mr.Fast mode");
+  assertContains(clean, "Implementing", "should show fast_execution as Implementing");
+  assertNotContains(clean, "reinforcements:", "Mr.Fast should not show reinforcement count");
+  assertContains(clean, "failures:0", "should show failure count");
+});
+
+test("shows context window percentage from stdin", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_2_planning",
+    started_at: new Date().toISOString(),
+  });
+  const output = runStatusline({
+    cwd: TEMP_DIR,
+    context_window: { used_percentage: 42 },
+  });
+  const clean = stripAnsi(output);
+  assertContains(clean, "ctx:", "should have context element");
+  assertContains(clean, "42%", "should show 42%");
+});
+
+test("shows context warning at 75%", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_6_execution",
+    started_at: new Date().toISOString(),
+  });
+  const output = runStatusline({
+    cwd: TEMP_DIR,
+    context_window: { used_percentage: 75 },
+  });
+  const clean = stripAnsi(output);
+  assertContains(clean, "75%", "should show 75%");
+  // Yellow color (warning) should be present in raw output
+  assertContains(output, "\x1b[33m", "should have yellow ANSI for warning");
+});
+
+test("shows COMPRESS? at 80%", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_6_execution",
+    started_at: new Date().toISOString(),
+  });
+  const output = runStatusline({
+    cwd: TEMP_DIR,
+    context_window: { used_percentage: 82 },
+  });
+  const clean = stripAnsi(output);
+  assertContains(clean, "COMPRESS?", "should show COMPRESS? at 82%");
+});
+
+test("shows CRITICAL at 90%", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_6_execution",
+    started_at: new Date().toISOString(),
+  });
+  const output = runStatusline({
+    cwd: TEMP_DIR,
+    context_window: { used_percentage: 90 },
+  });
+  const clean = stripAnsi(output);
+  assertContains(clean, "CRITICAL", "should show CRITICAL at 90%");
+  assertContains(output, "\x1b[31m", "should have red ANSI for critical");
+});
+
+test("shows session duration", () => {
+  resetState();
+  const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_6_execution",
+    started_at: fiveMinAgo,
+  });
+  const output = runStatusline({ cwd: TEMP_DIR });
+  const clean = stripAnsi(output);
+  assertContains(clean, "session:", "should have session element");
+  assertContains(clean, "5m", "should show ~5m duration");
+});
+
+test("shows beads progress when beads_created > 0", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_6_execution",
+    started_at: new Date().toISOString(), beads_created: 8, beads_closed: 3,
+  });
+  const output = runStatusline({ cwd: TEMP_DIR });
+  const clean = stripAnsi(output);
+  assertContains(clean, "beads:3/8", "should show beads progress");
+});
+
+test("hides beads when beads_created is 0", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_2_planning",
+    started_at: new Date().toISOString(), beads_created: 0,
+  });
+  const output = runStatusline({ cwd: TEMP_DIR });
+  const clean = stripAnsi(output);
+  assertNotContains(clean, "beads:", "should not show beads when none created");
+});
+
+test("shows active agents from subagent-tracking.json", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_6_execution",
+    started_at: new Date().toISOString(),
+  });
+  writeFileSync(
+    join(TEMP_DIR, ".oh-my-beads", "state", "subagent-tracking.json"),
+    JSON.stringify({
+      agents: [
+        { id: "w1", role: "worker", status: "running", model: "sonnet" },
+        { id: "r1", role: "reviewer", status: "running", model: "opus" },
+        { id: "e1", role: "explorer", status: "stopped", model: "haiku" },
+      ],
+    })
+  );
+  const output = runStatusline({ cwd: TEMP_DIR });
+  const clean = stripAnsi(output);
+  assertContains(clean, "agents:", "should have agents element");
+  assertContains(clean, "W", "should show worker code");
+  assertContains(clean, "R", "should show reviewer code");
+  assertNotContains(clean, "agents:WRe", "should not include stopped agent");
+});
+
+test("shows files count from tool-tracking.json", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_6_execution",
+    started_at: new Date().toISOString(),
+  });
+  writeFileSync(
+    join(TEMP_DIR, ".oh-my-beads", "state", "tool-tracking.json"),
+    JSON.stringify({ files_modified: ["/a.ts", "/b.ts", "/c.ts"] })
+  );
+  const output = runStatusline({ cwd: TEMP_DIR });
+  const clean = stripAnsi(output);
+  assertContains(clean, "files:3", "should show files modified count");
+});
+
+test("shows context even when idle", () => {
+  resetState();
+  const output = runStatusline({
+    cwd: TEMP_DIR,
+    context_window: { used_percentage: 25 },
+  });
+  const clean = stripAnsi(output);
+  assertContains(clean, "idle", "should show idle");
+  assertContains(clean, "ctx:", "should still show context when idle");
+  assertContains(clean, "25%", "should show context percentage");
+});
+
+test("includes OMB version label", () => {
+  resetState();
+  const output = runStatusline({ cwd: TEMP_DIR });
+  const clean = stripAnsi(output);
+  assertContains(clean, "[OMB#", "should have version label");
+  assertContains(clean, "]", "should close version label");
+});
+
+test("uses ANSI colors for mode display", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "bootstrap",
+    started_at: new Date().toISOString(),
+  });
+  const output = runStatusline({ cwd: TEMP_DIR });
+  // Mr.Beads should use magenta
+  assertContains(output, "\x1b[35m", "Mr.Beads should use magenta ANSI");
+
+  writeState({
+    active: true, mode: "mr.fast", current_phase: "fast_scout",
+    started_at: new Date().toISOString(),
+  });
+  const output2 = runStatusline({ cwd: TEMP_DIR });
+  // Mr.Fast should use cyan
+  assertContains(output2, "\x1b[36m", "Mr.Fast should use cyan ANSI");
+});
+
+test("gate phases show as yellow", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "gate_2_pending",
+    started_at: new Date().toISOString(),
+  });
+  const output = runStatusline({ cwd: TEMP_DIR });
+  const clean = stripAnsi(output);
+  assertContains(clean, "Gate 2: Awaiting User", "should display gate phase");
+  assertContains(output, "\x1b[33m", "gate should use yellow ANSI");
+});
+
+test("uses non-breaking spaces in raw output", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_6_execution",
+    started_at: new Date().toISOString(),
+  });
+  // Run without stripping non-breaking spaces
+  const scriptPath = join(SCRIPTS_DIR, "statusline.mjs");
+  const result = execFileSync(process.execPath, [scriptPath], {
+    input: JSON.stringify({ cwd: TEMP_DIR }),
+    encoding: "utf8",
+    timeout: 10_000,
+    cwd: TEMP_DIR,
+  }).trim();
+  assertContains(result, "\u00A0", "should use non-breaking spaces for alignment");
+});
+
+// ---- SHARED HELPERS MODULE ----
+
+console.log("\n=== helpers.mjs (Shared Helpers) ===\n");
+
+// Import shared helpers for direct unit testing
+const helpers = await import(join(SCRIPTS_DIR, "helpers.mjs"));
+
+test("readJson returns parsed JSON for valid file", () => {
+  const testFile = join(TEMP_DIR, "test-valid.json");
+  writeFileSync(testFile, JSON.stringify({ hello: "world", count: 42 }));
+  const result = helpers.readJson(testFile);
+  assert(result !== null, "should return object");
+  assert(result.hello === "world", `hello should be 'world', got ${result.hello}`);
+  assert(result.count === 42, `count should be 42, got ${result.count}`);
+});
+
+test("readJson returns null for missing file", () => {
+  const result = helpers.readJson(join(TEMP_DIR, "nonexistent-file.json"));
+  assert(result === null, "should return null for missing file");
+});
+
+test("readJson returns null for invalid JSON", () => {
+  const testFile = join(TEMP_DIR, "test-invalid.json");
+  writeFileSync(testFile, "{ this is not valid json");
+  const result = helpers.readJson(testFile);
+  assert(result === null, "should return null for invalid JSON");
+});
+
+test("writeJsonAtomic writes valid JSON file", () => {
+  const testFile = join(TEMP_DIR, "test-write.json");
+  helpers.writeJsonAtomic(testFile, { key: "value", num: 99 });
+  assert(existsSync(testFile), "file should exist after write");
+  const content = JSON.parse(readFileSync(testFile, "utf8"));
+  assert(content.key === "value", `key should be 'value', got ${content.key}`);
+  assert(content.num === 99, `num should be 99, got ${content.num}`);
+});
+
+test("writeJsonAtomic creates parent directories", () => {
+  const testFile = join(TEMP_DIR, "nested", "deep", "test-nested.json");
+  helpers.writeJsonAtomic(testFile, { nested: true });
+  assert(existsSync(testFile), "file should exist in nested dir");
+  const content = JSON.parse(readFileSync(testFile, "utf8"));
+  assert(content.nested === true, "nested should be true");
+});
+
+test("hookOutput produces correct JSON structure without systemMessage", () => {
+  // Capture stdout by temporarily replacing process.stdout.write
+  let captured = "";
+  const origWrite = process.stdout.write;
+  process.stdout.write = (data) => { captured += data; };
+  helpers.hookOutput("TestEvent", "some context");
+  process.stdout.write = origWrite;
+  const parsed = JSON.parse(captured);
+  assert(parsed.continue === true, "should have continue: true");
+  assert(parsed.hookSpecificOutput.hookEventName === "TestEvent", "should have correct event name");
+  assert(parsed.hookSpecificOutput.additionalContext === "some context", "should have additionalContext");
+  assert(!parsed.systemMessage, "should not have systemMessage when not provided");
+});
+
+test("hookOutput produces correct JSON with systemMessage", () => {
+  let captured = "";
+  const origWrite = process.stdout.write;
+  process.stdout.write = (data) => { captured += data; };
+  helpers.hookOutput("PreCompact", "checkpoint saved", "System context for re-injection");
+  process.stdout.write = origWrite;
+  const parsed = JSON.parse(captured);
+  assert(parsed.continue === true, "should have continue: true");
+  assert(parsed.systemMessage === "System context for re-injection", "should have systemMessage");
+  assert(parsed.hookSpecificOutput.hookEventName === "PreCompact", "should have correct event name");
+  assert(parsed.hookSpecificOutput.additionalContext === "checkpoint saved", "should have additionalContext");
+});
+
+test("hookOutput omits additionalContext when null", () => {
+  let captured = "";
+  const origWrite = process.stdout.write;
+  process.stdout.write = (data) => { captured += data; };
+  helpers.hookOutput("SessionStart", null);
+  process.stdout.write = origWrite;
+  const parsed = JSON.parse(captured);
+  assert(parsed.continue === true, "should have continue: true");
+  assert(parsed.hookSpecificOutput.hookEventName === "SessionStart", "should have event name");
+  assert(!parsed.hookSpecificOutput.additionalContext, "should not have additionalContext when null");
 });
 
 // ============================================================

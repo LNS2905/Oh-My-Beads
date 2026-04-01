@@ -3,8 +3,9 @@
 /**
  * oh-my-beads state bridge — CLI interface for state operations.
  *
- * Provides uniform state_read/state_write/state_list_active/state_clear/state_get_status
- * operations callable from skills and hooks.
+ * Hybrid state model:
+ *   Runtime state → ~/.oh-my-beads/projects/{hash}/
+ *   Legacy fallback → {cwd}/.oh-my-beads/state/ (read-only migration)
  *
  * Usage:
  *   node state-bridge.cjs read [--session-id ID]
@@ -20,22 +21,29 @@
 
 const { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, readdirSync, rmSync } = require("fs");
 const { join, dirname } = require("path");
+const { createHash } = require("crypto");
+const { homedir } = require("os");
+const { readJson, writeJsonAtomic } = require("../helpers.cjs");
 
-// --- Helpers ---
-function readJson(path) {
-  try {
-    if (!existsSync(path)) return null;
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch { return null; }
+// --- Inline path helpers (CJS cannot import ESM resolve-state-dir.mjs) ---
+
+function getSystemRoot() {
+  return process.env.OMB_HOME || join(homedir(), ".oh-my-beads");
 }
 
-function writeJsonAtomic(path, data) {
-  const dir = dirname(path);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(data, null, 2));
-  renameSync(tmp, path);
+function pHash(cwd) {
+  return createHash("sha256").update(cwd).digest("hex").slice(0, 8);
 }
+
+function getProjectStateRoot(cwd) {
+  return join(getSystemRoot(), "projects", pHash(cwd));
+}
+
+function getLegacyBaseDir(cwd) {
+  return join(cwd, ".oh-my-beads", "state");
+}
+
+// readJson and writeJsonAtomic imported from helpers.cjs
 
 function parseArgs(argv) {
   const args = { _: [] };
@@ -51,53 +59,75 @@ function parseArgs(argv) {
   return args;
 }
 
-function getBaseDir() {
-  return join(process.cwd(), ".oh-my-beads", "state");
+function getProjectRoot() {
+  return process.cwd();
 }
 
-function getSessionPath(baseDir, sessionId) {
-  if (sessionId && sessionId !== "legacy") {
-    return join(baseDir, "sessions", sessionId);
+function getSessionDir(projectRoot, sessionId) {
+  if (sessionId && sessionId !== "legacy" && sessionId !== "root") {
+    return join(projectRoot, "sessions", sessionId);
   }
-  return baseDir;
+  return projectRoot;
 }
 
-function resolvePath(baseDir, sessionId, filename) {
-  if (sessionId && sessionId !== "legacy") {
-    const sessionPath = join(baseDir, "sessions", sessionId, filename);
+/**
+ * Resolve a file: check system-level first, then legacy fallback.
+ */
+function resolvePath(cwd, projectRoot, sessionId, filename) {
+  // System-level session-scoped
+  if (sessionId && sessionId !== "legacy" && sessionId !== "root") {
+    const sessionPath = join(projectRoot, "sessions", sessionId, filename);
     if (existsSync(sessionPath)) return sessionPath;
   }
-  const legacyPath = join(baseDir, filename);
+  // System-level root
+  const systemPath = join(projectRoot, filename);
+  if (existsSync(systemPath)) return systemPath;
+
+  // Legacy fallback
+  const legacyBase = getLegacyBaseDir(cwd);
+  if (sessionId && sessionId !== "legacy" && sessionId !== "root") {
+    const legacySessionPath = join(legacyBase, "sessions", sessionId, filename);
+    if (existsSync(legacySessionPath)) return legacySessionPath;
+  }
+  const legacyPath = join(legacyBase, filename);
   if (existsSync(legacyPath)) return legacyPath;
-  // Default
-  return sessionId && sessionId !== "legacy"
-    ? join(baseDir, "sessions", sessionId, filename)
-    : join(baseDir, filename);
+
+  // Default: system-level
+  if (sessionId && sessionId !== "legacy" && sessionId !== "root") {
+    return join(projectRoot, "sessions", sessionId, filename);
+  }
+  return join(projectRoot, filename);
 }
 
 // --- Commands ---
 
 function cmdRead(args) {
-  const baseDir = getBaseDir();
+  const cwd = getProjectRoot();
+  const projectRoot = getProjectStateRoot(cwd);
   const sessionId = args["session-id"] || process.env.CLAUDE_SESSION_ID || null;
-  const path = resolvePath(baseDir, sessionId, "session.json");
+  const path = resolvePath(cwd, projectRoot, sessionId, "session.json");
   const data = readJson(path);
   process.stdout.write(JSON.stringify({
     success: true,
-    session_id: sessionId || "legacy",
+    session_id: sessionId || "root",
     path,
     data: data || null,
   }));
 }
 
 function cmdWrite(args) {
-  const baseDir = getBaseDir();
+  const cwd = getProjectRoot();
+  const projectRoot = getProjectStateRoot(cwd);
   const sessionId = args["session-id"] || process.env.CLAUDE_SESSION_ID || null;
-  const sessionDir = getSessionPath(baseDir, sessionId);
+  const sessionDir = getSessionDir(projectRoot, sessionId);
   const path = join(sessionDir, "session.json");
 
   // Read existing or start fresh
-  let existing = readJson(path) || {};
+  let existing = readJson(path);
+  if (!existing) {
+    // Try legacy
+    existing = readJson(resolvePath(cwd, projectRoot, sessionId, "session.json")) || {};
+  }
 
   // Merge provided fields
   if (args.phase) existing.current_phase = args.phase;
@@ -115,26 +145,30 @@ function cmdWrite(args) {
 
   writeJsonAtomic(path, existing);
 
-  // Also write to legacy path for compatibility
-  if (sessionId && sessionId !== "legacy") {
-    const legacyPath = join(baseDir, "session.json");
-    try { writeJsonAtomic(legacyPath, existing); } catch { /* best effort */ }
-  }
+  // Also write to legacy path for backward compat
+  const legacyBase = getLegacyBaseDir(cwd);
+  try {
+    const legacyPath = sessionId && sessionId !== "legacy" && sessionId !== "root"
+      ? join(legacyBase, "sessions", sessionId, "session.json")
+      : join(legacyBase, "session.json");
+    writeJsonAtomic(legacyPath, existing);
+  } catch { /* best effort */ }
 
   process.stdout.write(JSON.stringify({
     success: true,
-    session_id: sessionId || "legacy",
+    session_id: sessionId || "root",
     path,
     data: existing,
   }));
 }
 
 function cmdList() {
-  const baseDir = getBaseDir();
+  const cwd = getProjectRoot();
+  const projectRoot = getProjectStateRoot(cwd);
   const sessions = [];
 
-  // Scan sessions/ directory
-  const sessionsDir = join(baseDir, "sessions");
+  // Scan system-level sessions/
+  const sessionsDir = join(projectRoot, "sessions");
   if (existsSync(sessionsDir)) {
     try {
       const entries = readdirSync(sessionsDir, { withFileTypes: true });
@@ -154,10 +188,22 @@ function cmdList() {
     } catch { /* ignore */ }
   }
 
+  // Check system-level root
+  const rootFile = join(projectRoot, "session.json");
+  const rootData = readJson(rootFile);
+  if (rootData) {
+    sessions.push({
+      session_id: "root",
+      active: rootData.active || false,
+      current_phase: rootData.current_phase || "unknown",
+      started_at: rootData.started_at || null,
+    });
+  }
+
   // Check legacy
-  const legacyFile = join(baseDir, "session.json");
+  const legacyFile = join(getLegacyBaseDir(cwd), "session.json");
   const legacyData = readJson(legacyFile);
-  if (legacyData) {
+  if (legacyData && !sessions.some(s => s.active)) {
     sessions.push({
       session_id: "legacy",
       active: legacyData.active || false,
@@ -174,18 +220,19 @@ function cmdList() {
 }
 
 function cmdClear(args) {
-  const baseDir = getBaseDir();
+  const cwd = getProjectRoot();
+  const projectRoot = getProjectStateRoot(cwd);
   const sessionId = args["session-id"] || process.env.CLAUDE_SESSION_ID || null;
   const files = ["session.json", "tool-tracking.json", "subagent-tracking.json", "checkpoint.json"];
   const cleared = [];
 
-  if (sessionId && sessionId !== "legacy") {
-    const sessionDir = join(baseDir, "sessions", sessionId);
+  // Clear system-level
+  if (sessionId && sessionId !== "legacy" && sessionId !== "root") {
+    const sessionDir = join(projectRoot, "sessions", sessionId);
     for (const f of files) {
       const p = join(sessionDir, f);
       if (existsSync(p)) { rmSync(p, { force: true }); cleared.push(p); }
     }
-    // Clean empty dir
     try {
       if (existsSync(sessionDir) && readdirSync(sessionDir).length === 0) {
         rmSync(sessionDir, { recursive: true, force: true });
@@ -193,31 +240,40 @@ function cmdClear(args) {
     } catch { /* ignore */ }
   }
 
-  // Also clear legacy
+  // Clear system-level root
   for (const f of files) {
-    const p = join(baseDir, f);
+    const p = join(projectRoot, f);
+    if (existsSync(p)) { rmSync(p, { force: true }); cleared.push(p); }
+  }
+
+  // Also clear legacy
+  const legacyBase = getLegacyBaseDir(cwd);
+  for (const f of files) {
+    const p = join(legacyBase, f);
     if (existsSync(p)) { rmSync(p, { force: true }); cleared.push(p); }
   }
 
   process.stdout.write(JSON.stringify({
     success: true,
-    session_id: sessionId || "legacy",
+    session_id: sessionId || "root",
     cleared,
   }));
 }
 
 function cmdStatus(args) {
-  const baseDir = getBaseDir();
+  const cwd = getProjectRoot();
+  const projectRoot = getProjectStateRoot(cwd);
   const sessionId = args["session-id"] || process.env.CLAUDE_SESSION_ID || null;
 
-  const sessionPath = resolvePath(baseDir, sessionId, "session.json");
+  const sessionPath = resolvePath(cwd, projectRoot, sessionId, "session.json");
   const session = readJson(sessionPath);
-  const tracking = readJson(resolvePath(baseDir, sessionId, "tool-tracking.json"));
-  const subagents = readJson(resolvePath(baseDir, sessionId, "subagent-tracking.json"));
+  const tracking = readJson(resolvePath(cwd, projectRoot, sessionId, "tool-tracking.json"));
+  const subagents = readJson(resolvePath(cwd, projectRoot, sessionId, "subagent-tracking.json"));
 
   process.stdout.write(JSON.stringify({
     success: true,
-    session_id: sessionId || "legacy",
+    session_id: sessionId || "root",
+    state_dir: projectRoot,
     has_session: !!session,
     active: session?.active || false,
     current_phase: session?.current_phase || null,

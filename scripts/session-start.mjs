@@ -18,26 +18,15 @@
 
 import { readFileSync, existsSync, readdirSync } from "fs";
 import { join } from "path";
+import { execFileSync } from "child_process";
+import { getSystemRoot, getProjectStateRoot, resolveHandoffsDir, ensureRuntimeDirs, readJsonSafe } from "./state-tools/resolve-state-dir.mjs";
+import { readJson, hookOutput as _hookOutput } from "./helpers.mjs";
 
-const PLUGIN_VERSION = "v1.1.0";
+const PLUGIN_VERSION = "v1.2.0";
 
-function hookOutput(additionalContext) {
-  const output = {
-    continue: true,
-    hookSpecificOutput: {
-      hookEventName: "SessionStart",
-      ...(additionalContext ? { additionalContext } : {}),
-    },
-  };
-  process.stdout.write(JSON.stringify(output));
-}
-
-function readJson(path) {
-  try {
-    if (!existsSync(path)) return null;
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch { return null; }
-}
+const hookOutput = (additionalContext) => {
+  _hookOutput("SessionStart", additionalContext);
+};
 
 function getLatestHandoff(handoffsDir) {
   try {
@@ -73,6 +62,60 @@ function getPluginVersion(cwd) {
   return PLUGIN_VERSION;
 }
 
+/**
+ * Check Node.js version — warn if below 18.
+ * Returns a warning string or null.
+ */
+function checkNodeVersion() {
+  const major = parseInt(process.versions.node.split(".")[0], 10);
+  if (major < 18) {
+    return `[WARNING] Node.js ${process.versions.node} detected. oh-my-beads requires Node.js 18+. Some features may not work.`;
+  }
+  return null;
+}
+
+/**
+ * Check if beads-village MCP server is available.
+ * Returns a warning string or null.
+ */
+function checkBeadsVillage() {
+  try {
+    execFileSync("which", ["beads-village"], { stdio: "ignore", timeout: 2000 });
+    return null;
+  } catch {
+    // Try npx as fallback
+    try {
+      execFileSync("npx", ["beads-village", "--version"], { stdio: "ignore", timeout: 2000 });
+      return null;
+    } catch {
+      return `[WARNING] beads-village MCP not found in PATH. Task tracking (beads_village tools) will be unavailable. Install: npm install -g beads-village`;
+    }
+  }
+}
+
+/**
+ * Check setup completion state for first-run / update detection.
+ * Returns a banner string or null.
+ */
+function checkSetupState(pluginVersion) {
+  try {
+    const setupPath = join(getSystemRoot(), "setup.json");
+    const setup = readJsonSafe(setupPath);
+    if (!setup || !setup.setupCompleted) {
+      return `[FIRST RUN] Oh-My-Beads is installed but not configured. Run 'setup omb' to complete installation.`;
+    }
+    // Compare setupVersion with current plugin version (strip 'v' prefix)
+    const currentVer = pluginVersion.replace(/^v/, "");
+    const setupVer = (setup.setupVersion || "0.0.0").replace(/^v/, "");
+    if (setupVer !== currentVer) {
+      return `[UPDATE] Oh-My-Beads updated from v${setupVer} to ${pluginVersion}. Run 'setup omb' to refresh configuration.`;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // --- Main ---
 let input = "";
 process.stdin.setEncoding("utf8");
@@ -87,27 +130,44 @@ process.stdin.on("end", () => {
 
   const cwd = data.cwd || data.directory || process.cwd();
   const source = data.source || "startup";
-  const STATE_FILE = join(cwd, ".oh-my-beads", "state", "session.json");
-  const CHECKPOINT_FILE = join(cwd, ".oh-my-beads", "state", "checkpoint.json");
-  const HANDOFFS_DIR = join(cwd, ".oh-my-beads", "handoffs");
+  const sessionId = data.session_id || data.sessionId || process.env.CLAUDE_SESSION_ID || null;
+
+  // Auto-initialize runtime directories (system-level)
+  try { ensureRuntimeDirs(cwd, sessionId); } catch { /* best effort */ }
+
+  // Resolve state paths (system-level)
+  const projectStateRoot = getProjectStateRoot(cwd);
+  const stateDir = sessionId ? join(projectStateRoot, "sessions", sessionId) : projectStateRoot;
+  const STATE_FILE = join(stateDir, "session.json");
+  const CHECKPOINT_FILE = join(stateDir, "checkpoint.json");
+  const HANDOFFS_DIR = resolveHandoffsDir(cwd);
   const AGENTS_FILE = join(cwd, "AGENTS.md");
+
+  // Legacy fallback: check project-level state if system-level doesn't exist
+  const LEGACY_STATE_FILE = join(cwd, ".oh-my-beads", "state", "session.json");
 
   const parts = [];
   const version = getPluginVersion(cwd);
 
+  // Prerequisite checks (only on startup/resume, not on compact)
+  if (source !== "compact") {
+    const nodeWarn = checkNodeVersion();
+    if (nodeWarn) parts.push(nodeWarn);
+    const beadsWarn = checkBeadsVillage();
+    if (beadsWarn) parts.push(beadsWarn);
+    const setupWarn = checkSetupState(version);
+    if (setupWarn) parts.push(setupWarn);
+  }
+
   // Enhanced plugin banner (compact, max 5 lines)
   let bannerLine = `oh-my-beads ${version} loaded.`;
 
-  // Check for active session state to include in banner
-  let activeState = null;
-  if (existsSync(STATE_FILE)) {
-    try {
-      activeState = JSON.parse(readFileSync(STATE_FILE, "utf8"));
-      if (!activeState.active) activeState = null;
-    } catch {
-      activeState = null;
-    }
+  // Check for active session state (system-level first, then legacy fallback)
+  let activeState = readJson(STATE_FILE);
+  if (!activeState?.active) {
+    activeState = readJson(LEGACY_STATE_FILE);
   }
+  if (activeState && !activeState.active) activeState = null;
 
   if (activeState) {
     const mode = activeState.mode || "mr.beads";

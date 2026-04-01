@@ -13,26 +13,10 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, readdirSync } from "fs";
 import { join, dirname } from "path";
-import { resolveStateDir } from "./state-tools/resolve-state-dir.mjs";
+import { resolveStateDir, resolveHandoffsDir } from "./state-tools/resolve-state-dir.mjs";
+import { readJson, writeJsonAtomic, hookOutput as _hookOutput } from "./helpers.mjs";
 
 // --- Helpers ---
-function readJson(path) {
-  try {
-    if (!existsSync(path)) return null;
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch { return null; }
-}
-
-function writeJsonAtomic(path, data) {
-  try {
-    const dir = dirname(path);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    const tmp = `${path}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(data, null, 2));
-    renameSync(tmp, path);
-  } catch { /* best effort */ }
-}
-
 function writeTextFile(path, content) {
   try {
     const dir = dirname(path);
@@ -41,17 +25,9 @@ function writeTextFile(path, content) {
   } catch { /* best effort */ }
 }
 
-function hookOutput(additionalContext, systemMessage) {
-  const output = {
-    continue: true,
-    ...(systemMessage ? { systemMessage } : {}),
-    hookSpecificOutput: {
-      hookEventName: "PreCompact",
-      ...(additionalContext ? { additionalContext } : {}),
-    },
-  };
-  process.stdout.write(JSON.stringify(output));
-}
+const hookOutput = (additionalContext, systemMessage) => {
+  _hookOutput("PreCompact", additionalContext, systemMessage);
+};
 
 // --- Main ---
 let input = "";
@@ -68,7 +44,7 @@ process.stdin.on("end", () => {
 
   const directory = data.cwd || data.directory || process.cwd();
   const { stateDir } = resolveStateDir(directory, data);
-  const handoffsDir = join(directory, ".oh-my-beads", "handoffs");
+  const handoffsDir = resolveHandoffsDir(directory);
 
   // Read current session state
   const sessionFile = join(stateDir, "session.json");

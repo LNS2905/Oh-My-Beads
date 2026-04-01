@@ -18,13 +18,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import { join, dirname } from "path";
 import { resolveStateDir } from "./state-tools/resolve-state-dir.mjs";
-
-// --- Atomic write helper ---
-function writeJsonAtomic(filePath, data) {
-  const tmp = `${filePath}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(data, null, 2));
-  renameSync(tmp, filePath);
-}
+import { readJson, writeJsonAtomic, hookOutput as _hookOutput } from "./helpers.mjs";
 
 // --- Constants ---
 const MAX_OUTPUT_CHARS = parseInt(process.env.OMB_MAX_OUTPUT_CHARS || "12000", 10);
@@ -46,33 +40,11 @@ const CODE_TOOLS = new Set(["Write", "Edit"]);
 const BASH_TOOL = "Bash";
 
 // --- Helpers ---
-function readJson(path) {
-  try {
-    if (!existsSync(path)) return null;
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch { return null; }
-}
+const hookOutput = (additionalContext) => {
+  _hookOutput("PostToolUse", additionalContext);
+};
 
-function writeJson(path, data) {
-  try {
-    const dir = dirname(path);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    const tmp = `${path}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(data, null, 2));
-    renameSync(tmp, path);
-  } catch { /* best effort */ }
-}
-
-function hookOutput(additionalContext) {
-  const output = {
-    continue: true,
-    hookSpecificOutput: {
-      hookEventName: "PostToolUse",
-      ...(additionalContext ? { additionalContext } : {}),
-    },
-  };
-  process.stdout.write(JSON.stringify(output));
-}
+const writeJson = (path, data) => writeJsonAtomic(path, data);
 
 function detectFailure(output) {
   if (!output || typeof output !== "string") return null;

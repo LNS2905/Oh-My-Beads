@@ -17,7 +17,8 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import { join, dirname, resolve, relative } from "path";
-import { resolveStateDir } from "./state-tools/resolve-state-dir.mjs";
+import { resolveStateDir, getSystemRoot } from "./state-tools/resolve-state-dir.mjs";
+import { readJson, writeJsonAtomic, hookOutput as _hookOutput } from "./helpers.mjs";
 
 // --- Constants ---
 const RETRY_WINDOW_MS = 60_000; // 60 seconds
@@ -31,33 +32,9 @@ function isPathContained(base, target) {
 }
 
 // --- Helpers ---
-function readJson(path) {
-  try {
-    if (!existsSync(path)) return null;
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch { return null; }
-}
-
-function writeJsonAtomic(filePath, data) {
-  try {
-    const dir = dirname(filePath);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    const tmp = `${filePath}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(data, null, 2));
-    renameSync(tmp, filePath);
-  } catch { /* best effort */ }
-}
-
-function hookOutput(additionalContext) {
-  const output = {
-    continue: true,
-    hookSpecificOutput: {
-      hookEventName: "PostToolUseFailure",
-      ...(additionalContext ? { additionalContext } : {}),
-    },
-  };
-  process.stdout.write(JSON.stringify(output));
-}
+const hookOutput = (additionalContext) => {
+  _hookOutput("PostToolUseFailure", additionalContext);
+};
 
 function calculateRetryCount(existingState, toolName, now) {
   if (!existingState) return 1;
@@ -92,8 +69,9 @@ process.stdin.on("end", () => {
   const { stateDir } = resolveStateDir(directory, data);
   const errorFile = join(stateDir, "last-tool-error.json");
 
-  // Path containment guard
-  if (!isPathContained(directory, stateDir)) {
+  // Path containment guard — stateDir may be under system root or project dir
+  const systemRoot = getSystemRoot();
+  if (!isPathContained(directory, stateDir) && !isPathContained(systemRoot, stateDir)) {
     hookOutput(null);
     return;
   }

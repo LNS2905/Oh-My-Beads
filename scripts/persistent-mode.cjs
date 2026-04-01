@@ -30,13 +30,32 @@
 
 const { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } = require("fs");
 const { join, dirname } = require("path");
+const { createHash } = require("crypto");
+const { homedir } = require("os");
+const { readJson, writeJsonAtomic: writeJson } = require("./helpers.cjs");
 
 // --- Constants ---
 const MAX_REINFORCEMENTS = 50;
 const STALE_THRESHOLD_MS = 2 * 60 * 60 * 1000; // 2 hours
 
-// --- Inline session-scoped state dir resolution (CJS cannot import ESM) ---
+// --- Inline system-level state dir resolution (CJS cannot import ESM) ---
+function getSystemRoot() {
+  return process.env.OMB_HOME || join(homedir(), ".oh-my-beads");
+}
+
+function pHash(cwd) {
+  return createHash("sha256").update(cwd).digest("hex").slice(0, 8);
+}
+
 function resolveStateDirCjs(directory, data) {
+  const sessionId = data?.session_id ?? data?.sessionId ?? process.env.CLAUDE_SESSION_ID ?? null;
+  const projectRoot = join(getSystemRoot(), "projects", pHash(directory));
+  if (sessionId) return join(projectRoot, "sessions", sessionId);
+  return projectRoot;
+}
+
+// Legacy path for migration fallback reads
+function resolveLegacyStateDirCjs(directory, data) {
   const sessionId = data?.session_id ?? data?.sessionId ?? process.env.CLAUDE_SESSION_ID ?? null;
   if (sessionId) return join(directory, ".oh-my-beads", "state", "sessions", sessionId);
   return join(directory, ".oh-my-beads", "state");
@@ -68,22 +87,7 @@ const PHASE_CONTINUATIONS = {
 };
 
 // --- Helpers ---
-function readJson(path) {
-  try {
-    if (!existsSync(path)) return null;
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch { return null; }
-}
-
-function writeJson(path, data) {
-  try {
-    const dir = dirname(path);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    const tmp = `${path}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(data, null, 2));
-    renameSync(tmp, path);
-  } catch { /* best effort */ }
-}
+// readJson and writeJson (alias for writeJsonAtomic) imported from helpers.cjs
 
 function isStale(state) {
   if (!state) return true;
@@ -105,7 +109,7 @@ function blockStop(reason) {
 function writeCheckpoint(stateDir, directory, state, reason) {
   if (!state) return;
   try {
-    const handoffsDir = join(directory, ".oh-my-beads", "handoffs");
+    const handoffsDir = join(getSystemRoot(), "projects", pHash(directory), "handoffs");
     const now = new Date().toISOString();
 
     // Write checkpoint JSON
@@ -146,9 +150,36 @@ async function main() {
   const directory = data.cwd || data.directory || process.cwd();
   const stateDir = resolveStateDirCjs(directory, data);
   const stateFile = join(stateDir, "session.json");
+  const legacyStateDir = resolveLegacyStateDirCjs(directory, data);
+  const legacyStateFile = join(legacyStateDir, "session.json");
 
-  // Read session state
-  const state = readJson(stateFile);
+  // Read session state — prefer whichever path has the most recently started session.
+  // System-level is primary; legacy is migration fallback. If both exist, use the newer one.
+  const sysState = readJson(stateFile);
+  const legacyState = readJson(legacyStateFile);
+  let state;
+  let effectiveStateFile;
+  if (!sysState && !legacyState) {
+    state = null;
+    effectiveStateFile = stateFile;
+  } else if (!sysState) {
+    state = legacyState;
+    effectiveStateFile = legacyStateFile;
+  } else if (!legacyState) {
+    state = sysState;
+    effectiveStateFile = stateFile;
+  } else {
+    // Both exist — pick the one with the most recent started_at
+    const sysTime = sysState.started_at ? new Date(sysState.started_at).getTime() : 0;
+    const legTime = legacyState.started_at ? new Date(legacyState.started_at).getTime() : 0;
+    if (legTime > sysTime) {
+      state = legacyState;
+      effectiveStateFile = legacyStateFile;
+    } else {
+      state = sysState;
+      effectiveStateFile = stateFile;
+    }
+  }
 
   // No active session → allow stop
   if (!state || !state.active) { allowStop(); return; }
@@ -164,7 +195,9 @@ async function main() {
   if (state.cancel_requested) { allowStop(); return; }
 
   // Cancel signal file with TTL → allow stop (prevents TOCTOU race)
-  const cancelSignal = readJson(join(stateDir, "cancel-signal.json"));
+  // Check both system-level and legacy dirs
+  const cancelSignal = readJson(join(stateDir, "cancel-signal.json"))
+    ?? readJson(join(legacyStateDir, "cancel-signal.json"));
   if (cancelSignal && cancelSignal.expires_at) {
     const expiresAt = new Date(cancelSignal.expires_at).getTime();
     if (Date.now() < expiresAt) { allowStop(); return; }
@@ -179,7 +212,7 @@ async function main() {
     state.active = false;
     state.deactivated_reason = "max_reinforcements_reached";
     state.last_checked_at = new Date().toISOString();
-    writeJson(stateFile, state);
+    writeJson(effectiveStateFile, state);
     allowStop();
     return;
   }
@@ -187,7 +220,7 @@ async function main() {
   // BLOCK THE STOP — session is active, phase is not terminal
   state.reinforcement_count = count;
   state.last_checked_at = new Date().toISOString();
-  writeJson(stateFile, state);
+  writeJson(effectiveStateFile, state);
 
   const continuation = PHASE_CONTINUATIONS[phase] || `Continue working on phase: ${phase}.`;
   const feature = state.feature_slug ? ` Feature: ${state.feature_slug}.` : "";

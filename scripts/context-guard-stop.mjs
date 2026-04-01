@@ -25,27 +25,10 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import { join, dirname } from "path";
 import { resolveStateDir } from "./state-tools/resolve-state-dir.mjs";
+import { readJson, writeJsonAtomic } from "./helpers.mjs";
 
 // --- Constants ---
 const CONTEXT_PRESSURE_THRESHOLD = 0.85; // 85% usage = likely context pressure
-
-// --- Helpers ---
-function readJson(path) {
-  try {
-    if (!existsSync(path)) return null;
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch { return null; }
-}
-
-function writeJsonAtomic(filePath, data) {
-  try {
-    const dir = dirname(filePath);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    const tmp = `${filePath}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(data, null, 2));
-    renameSync(tmp, filePath);
-  } catch { /* best effort */ }
-}
 
 function allowStop() {
   process.stdout.write(JSON.stringify({ continue: true, suppressOutput: true }));

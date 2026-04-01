@@ -18,6 +18,8 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, readdirSync } from "fs";
 import { join, dirname } from "path";
+import { resolveStateDir, getArtifactsDir } from "./state-tools/resolve-state-dir.mjs";
+import { readJson, writeJsonAtomic, hookOutput } from "./helpers.mjs";
 
 // --- Constants ---
 const ROLE_DELIVERABLES = {
@@ -44,34 +46,6 @@ const ROLE_DELIVERABLES = {
 };
 
 // --- Helpers ---
-function readJson(path) {
-  try {
-    if (!existsSync(path)) return null;
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch { return null; }
-}
-
-function writeJsonAtomic(path, data) {
-  try {
-    const dir = dirname(path);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    const tmp = `${path}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(data, null, 2));
-    renameSync(tmp, path);
-  } catch { /* best effort */ }
-}
-
-function hookOutput(eventName, additionalContext) {
-  const output = {
-    continue: true,
-    hookSpecificOutput: {
-      hookEventName: eventName,
-      ...(additionalContext ? { additionalContext } : {}),
-    },
-  };
-  process.stdout.write(JSON.stringify(output));
-}
-
 function detectRole(data) {
   // Check explicit role in spawn config
   const role = data.agent_role ?? data.agentRole ?? data.role ?? null;
@@ -133,7 +107,7 @@ process.stdin.on("end", () => {
   }
 
   const directory = data.cwd || data.directory || process.cwd();
-  const stateDir = join(directory, ".oh-my-beads", "state");
+  const { stateDir } = resolveStateDir(directory, data);
   const trackingFile = join(stateDir, "subagent-tracking.json");
 
   const event = detectEvent(data);
@@ -180,8 +154,8 @@ process.stdin.on("end", () => {
 
     if (expected?.files) {
       for (const glob of expected.files) {
-        // Simple check: look for the pattern in .oh-my-beads
-        const baseDir = join(directory, ".oh-my-beads");
+        // Simple check: look for the pattern in .oh-my-beads (project artifacts)
+        const baseDir = getArtifactsDir(directory);
         const parts = glob.split("/");
         let checkPath = baseDir;
         let found = false;

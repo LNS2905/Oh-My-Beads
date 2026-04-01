@@ -12,6 +12,8 @@ import { readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { upgradePrompt } from "./prompt-leverage.mjs";
+import { getProjectStateRoot, ensureDir } from "./state-tools/resolve-state-dir.mjs";
+import { hookOutput as _hookOutput } from "./helpers.mjs";
 
 // --- Config ---
 const KEYWORDS = [
@@ -19,13 +21,22 @@ const KEYWORDS = [
   { pattern: /\b(?:cancel\s*mr\.?fast|stop\s*mr\.?fast)\b/i, action: "cancel" },
   { pattern: /\b(?:cancel\s*mr\.?beads|stop\s*mr\.?beads)\b/i, action: "cancel" },
   { pattern: /\b(?:cancel\s*omb|stop\s*omb|cancel\s*oh-my-beads)\b/i, action: "cancel" },
+  // Update pattern (before invoke patterns to avoid omb catching it)
+  { pattern: /\b(?:update\s*omb|omb\s*update|update\s*oh-my-beads|upgrade\s*omb|omb\s*upgrade)\b/i, action: "update" },
   // Invoke patterns (mr.fast before omb to avoid omb catching everything)
   { pattern: /\b(?:mr\.?\s*fast|mrfast)\b/i, action: "invoke-fast" },
   { pattern: /\b(?:mr\.?\s*beads|mrbeads)\b/i, action: "invoke" },
   { pattern: /\b(?:oh-my-beads|omb)\b/i, action: "invoke" },
 ];
 
-const STATE_DIR = join(process.cwd(), ".oh-my-beads", "state");
+function getStateDir() {
+  return getProjectStateRoot(process.cwd());
+}
+
+// Legacy state dir for backward compat writes
+function getLegacyStateDir() {
+  return join(process.cwd(), ".oh-my-beads", "state");
+}
 
 // --- Helpers ---
 function extractPrompt(input) {
@@ -65,23 +76,18 @@ function isInformational(text, keyword) {
   return false;
 }
 
-function hookOutput(additionalContext) {
-  const output = {
-    continue: true,
-    hookSpecificOutput: {
-      hookEventName: "UserPromptSubmit",
-      ...(additionalContext ? { additionalContext } : {}),
-    },
-  };
-  process.stdout.write(JSON.stringify(output));
-}
+const hookOutput = (additionalContext) => {
+  _hookOutput("UserPromptSubmit", additionalContext);
+};
 
-function ensureStateDir() {
-  mkdirSync(STATE_DIR, { recursive: true });
+function ensureStateDirs() {
+  ensureDir(getStateDir());
+  // Also ensure legacy dir for backward compat
+  try { mkdirSync(getLegacyStateDir(), { recursive: true }); } catch { /* ignore */ }
 }
 
 function writeSessionState(phase, mode = "mr.beads") {
-  ensureStateDir();
+  ensureStateDirs();
   const state = {
     current_phase: phase,
     active: true,
@@ -90,29 +96,39 @@ function writeSessionState(phase, mode = "mr.beads") {
     reinforcement_count: 0,
     awaiting_confirmation: true,
   };
-  writeFileSync(join(STATE_DIR, "session.json"), JSON.stringify(state, null, 2));
+  const content = JSON.stringify(state, null, 2);
+  writeFileSync(join(getStateDir(), "session.json"), content);
+  // Legacy write for backward compat
+  try { writeFileSync(join(getLegacyStateDir(), "session.json"), content); } catch { /* ignore */ }
 }
 
 function clearSessionState() {
-  const sessionFile = join(STATE_DIR, "session.json");
+  const stateDir = getStateDir();
+  const sessionFile = join(stateDir, "session.json");
   // Write cancel signal file with 30s TTL to prevent TOCTOU race
   try {
-    ensureStateDir();
+    ensureStateDirs();
     const signal = {
       cancelled_at: new Date().toISOString(),
       expires_at: new Date(Date.now() + 30_000).toISOString(),
     };
-    writeFileSync(join(STATE_DIR, "cancel-signal.json"), JSON.stringify(signal, null, 2));
+    const signalContent = JSON.stringify(signal, null, 2);
+    writeFileSync(join(stateDir, "cancel-signal.json"), signalContent);
+    // Legacy
+    try { writeFileSync(join(getLegacyStateDir(), "cancel-signal.json"), signalContent); } catch { /* ignore */ }
   } catch { /* best effort */ }
-  if (existsSync(sessionFile)) {
-    try {
-      const state = JSON.parse(readFileSync(sessionFile, "utf8"));
-      state.active = false;
-      state.current_phase = "cancelled";
-      state.cancelled_at = new Date().toISOString();
-      writeFileSync(sessionFile, JSON.stringify(state, null, 2));
-    } catch {
-      rmSync(sessionFile, { force: true });
+  // Try system-level first, then legacy
+  for (const sf of [sessionFile, join(getLegacyStateDir(), "session.json")]) {
+    if (existsSync(sf)) {
+      try {
+        const state = JSON.parse(readFileSync(sf, "utf8"));
+        state.active = false;
+        state.current_phase = "cancelled";
+        state.cancelled_at = new Date().toISOString();
+        writeFileSync(sf, JSON.stringify(state, null, 2));
+      } catch {
+        rmSync(sf, { force: true });
+      }
     }
   }
 }
@@ -137,10 +153,18 @@ process.stdin.on("end", () => {
     // Skip informational context ("what is omb?", "what is mr.fast?")
     if (kw.action === "invoke" && (isInformational(clean, "omb") || isInformational(clean, "oh-my-beads") || isInformational(clean, "mr.beads") || isInformational(clean, "mrbeads"))) continue;
     if (kw.action === "invoke-fast" && (isInformational(clean, "mr.fast") || isInformational(clean, "mrfast"))) continue;
+    if (kw.action === "update" && (isInformational(clean, "update omb") || isInformational(clean, "omb update"))) continue;
 
     if (kw.action === "cancel") {
       clearSessionState();
       hookOutput("[MAGIC KEYWORD: cancel-omb]\n\nYou MUST cancel the active oh-my-beads session. Clear state and report.");
+      return;
+    }
+
+    if (kw.action === "update") {
+      hookOutput(
+        `[MAGIC KEYWORD: update-omb]\n\nYou MUST invoke the skill using the Skill tool:\n\nSkill: oh-my-beads:update-plugin\n\nUser request:\n${raw}\n\nIMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`
+      );
       return;
     }
 

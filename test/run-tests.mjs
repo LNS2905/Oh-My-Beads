@@ -2041,6 +2041,139 @@ test("state-bridge reads from legacy path when system-level is empty", () => {
   assert(result?.data?.feature_slug === "legacy-feature", "should read correct legacy data");
 });
 
+// ---- INACTIVE SESSION EARLY-RETURN: PRE-TOOL ENFORCER & POST-TOOL VERIFIER ----
+
+console.log("\n=== Inactive Session Optimization ===\n");
+
+test("pre-tool-enforcer early-returns for inactive session (no role checks)", () => {
+  resetState();
+  // No active session exists and no OMB_AGENT_ROLE set.
+  // The enforcer should early-return with {continue:true} without even
+  // reading role restrictions — the inactive session optimization.
+  const { output } = runScript("pre-tool-enforcer.mjs", {
+    tool_name: "Write",
+    tool_input: { file_path: "/project/src/app.ts" },
+    cwd: TEMP_DIR,
+  });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should continue");
+  // No additionalContext — pure pass-through
+  assert(!parsed?.hookSpecificOutput?.additionalContext, "should have no additionalContext for inactive session");
+});
+
+test("post-tool-verifier early-returns for inactive session (no tracking)", () => {
+  resetState();
+  // No active session. The verifier should return {continue:true} without updating tool-tracking.json.
+  rmSync(join(STATE_DIR, "tool-tracking.json"), { force: true });
+  const { output } = runScript("post-tool-verifier.mjs", {
+    cwd: TEMP_DIR, tool_name: "Write",
+    tool_input: { file_path: "/tmp/test.ts" }, tool_output: "Written",
+  });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should continue");
+  // tool-tracking.json should NOT be created (no tracking for inactive sessions)
+  assert(!existsSync(join(STATE_DIR, "tool-tracking.json")), "tool-tracking.json should not be created for inactive session");
+});
+
+// ---- CONSOLIDATED SUBAGENT-STOP ----
+
+console.log("\n=== Consolidated SubagentStop (subagent-stop.mjs) ===\n");
+
+test("consolidated SubagentStop updates tracking on stop", () => {
+  resetState();
+  // First, create a running agent entry in tracking
+  writeFileSync(join(STATE_DIR, "subagent-tracking.json"), JSON.stringify({
+    agents: [{ id: "worker-001", role: "worker", started_at: new Date().toISOString(), status: "running" }],
+  }, null, 2));
+  const { output } = runScript("subagent-stop.mjs", {
+    cwd: TEMP_DIR, hook_event_name: "SubagentStop",
+    agent_id: "worker-001", role: "worker", exit_code: 0,
+  });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should continue");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "Subagent", "should have subagent message");
+  // Verify tracking was updated
+  const tracking = JSON.parse(readFileSync(join(STATE_DIR, "subagent-tracking.json"), "utf8"));
+  const agent = tracking.agents.find(a => a.id === "worker-001");
+  assert(agent.status === "stopped", "agent status should be stopped");
+  assert(agent.stopped_at, "should have stopped_at timestamp");
+});
+
+test("consolidated SubagentStop verifies scout deliverables", () => {
+  resetState();
+  // Scout without CONTEXT.md should trigger a warning
+  const { output } = runScript("subagent-stop.mjs", {
+    cwd: TEMP_DIR, hook_event_name: "SubagentStop",
+    agent_id: "scout-001", role: "scout", exit_code: 0,
+  });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "WARNINGS", "should warn about missing deliverables");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "CONTEXT.md", "should mention CONTEXT.md");
+});
+
+test("consolidated SubagentStop passes for unknown role", () => {
+  resetState();
+  const { output } = runScript("subagent-stop.mjs", {
+    cwd: TEMP_DIR, hook_event_name: "SubagentStop",
+    agent_id: "custom-001", role: "custom-agent", exit_code: 0,
+  });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should continue");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "completed", "should report completion for unknown role");
+  assertNotContains(parsed?.hookSpecificOutput?.additionalContext || "", "WARNINGS", "should not warn for unknown role");
+});
+
+// ---- OMB_QUIET LEVELS ----
+
+console.log("\n=== OMB_QUIET Levels ===\n");
+
+test("OMB_QUIET=0 (default) includes informational output in post-tool-verifier", () => {
+  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
+  const bigOutput = "x".repeat(15000);
+  const { output } = runScript("post-tool-verifier.mjs", {
+    cwd: TEMP_DIR, tool_name: "Bash", tool_output: bigOutput,
+  }, { OMB_QUIET: "0" });
+  const parsed = parseOutput(output);
+  // At quiet=0, clipping message should be present
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "clipped", "should show clipping info at quiet=0");
+});
+
+test("OMB_QUIET=1 suppresses informational output in post-tool-verifier", () => {
+  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
+  const bigOutput = "x".repeat(15000);
+  const { output } = runScript("post-tool-verifier.mjs", {
+    cwd: TEMP_DIR, tool_name: "Bash", tool_output: bigOutput,
+  }, { OMB_QUIET: "1" });
+  const parsed = parseOutput(output);
+  // At quiet=1, informational clipping message should be suppressed
+  assert(!parsed?.hookSpecificOutput?.additionalContext, "should suppress clipping info at quiet=1");
+});
+
+test("OMB_QUIET=2 suppresses warning output in pre-tool-enforcer", () => {
+  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
+  // git push --force normally produces a WARNING
+  const { output } = runScript("pre-tool-enforcer.mjs", {
+    tool_name: "Bash", tool_input: { command: "git push --force origin main" },
+    cwd: TEMP_DIR,
+  }, { OMB_QUIET: "2" });
+  const parsed = parseOutput(output);
+  // At quiet=2, warnings should be suppressed
+  assert(!parsed?.hookSpecificOutput?.additionalContext, "should suppress warning at quiet=2");
+});
+
+test("OMB_QUIET=2 still emits blocks in pre-tool-enforcer (critical)", () => {
+  writeState({ active: true, current_phase: "phase_6_execution", started_at: new Date().toISOString() });
+  // rm -rf / should ALWAYS be blocked regardless of quiet level
+  const { output } = runScript("pre-tool-enforcer.mjs", {
+    tool_name: "Bash", tool_input: { command: "rm -rf / " },
+    cwd: TEMP_DIR,
+  }, { OMB_QUIET: "2" });
+  const parsed = parseOutput(output);
+  // Blocks are critical — never suppressed
+  assert(parsed?.decision === "block", "should still block dangerous commands at quiet=2");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "should still show BLOCKED at quiet=2");
+});
+
 // ============================================================
 // SUMMARY
 // ============================================================

@@ -13,7 +13,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { upgradePrompt } from "./prompt-leverage.mjs";
 import { getProjectStateRoot, ensureDir } from "./state-tools/resolve-state-dir.mjs";
-import { hookOutput as _hookOutput } from "./helpers.mjs";
+import { hookOutput as _hookOutput, getQuietLevel } from "./helpers.mjs";
 
 // --- Config ---
 const KEYWORDS = [
@@ -72,6 +72,13 @@ function isInformational(text, keyword) {
 }
 
 const hookOutput = (additionalContext) => {
+  const quiet = getQuietLevel();
+  // At quiet level 2, suppress non-critical keyword output (informational parts).
+  // MAGIC KEYWORD routing and cancel signals are always critical.
+  if (quiet >= 2 && additionalContext && !additionalContext.includes("MAGIC KEYWORD") && !additionalContext.includes("cancel-omb")) {
+    _hookOutput("UserPromptSubmit", null);
+    return;
+  }
   _hookOutput("UserPromptSubmit", additionalContext);
 };
 

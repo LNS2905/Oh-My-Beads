@@ -18,7 +18,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import { join, dirname } from "path";
 import { resolveStateDir } from "./state-tools/resolve-state-dir.mjs";
-import { readJson, writeJsonAtomic, hookOutput as _hookOutput } from "./helpers.mjs";
+import { readJson, writeJsonAtomic, hookOutput as _hookOutput, getQuietLevel } from "./helpers.mjs";
 
 // --- Constants ---
 const MAX_OUTPUT_CHARS = parseInt(process.env.OMB_MAX_OUTPUT_CHARS || "12000", 10);
@@ -153,19 +153,30 @@ process.stdin.on("end", async () => {
   } catch { /* best effort */ }
 
   // Generate advisory context if failure detected
+  // Failure messages are warnings — suppressed at quiet level 2
+  const quiet = getQuietLevel();
   if (failureDetected) {
-    hookOutput(
-      `[oh-my-beads] Tool failure detected: ${failureDetected}\n` +
-      `Phase: ${session.current_phase || session.phase || "unknown"}\n` +
-      `Total failures this session: ${session.failure_count}\n` +
-      `Review the error and fix before proceeding.`
-    );
+    if (quiet < 2) {
+      hookOutput(
+        `[oh-my-beads] Tool failure detected: ${failureDetected}\n` +
+        `Phase: ${session.current_phase || session.phase || "unknown"}\n` +
+        `Total failures this session: ${session.failure_count}\n` +
+        `Review the error and fix before proceeding.`
+      );
+    } else {
+      hookOutput(null);
+    }
     return;
   }
 
   // No issues — pass through (with clipping annotation if needed)
+  // Clipping messages are informational — suppressed at quiet level 1+
   if (clipped) {
-    hookOutput(`[oh-my-beads] Output clipped from ${(typeof toolOutput === "string" ? toolOutput : JSON.stringify(toolOutput)).length} to ${MAX_OUTPUT_CHARS} chars.`);
+    if (quiet < 1) {
+      hookOutput(`[oh-my-beads] Output clipped from ${(typeof toolOutput === "string" ? toolOutput : JSON.stringify(toolOutput)).length} to ${MAX_OUTPUT_CHARS} chars.`);
+    } else {
+      hookOutput(null);
+    }
     return;
   }
   hookOutput(null);

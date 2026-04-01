@@ -61,4 +61,15 @@ function hookOutput(hookEventName, additionalContext, systemMessage) {
   process.stdout.write(JSON.stringify(output));
 }
 
-module.exports = { readJson, writeJsonAtomic, hookOutput };
+/**
+ * Get the OMB_QUIET level from env var.
+ * Level 0 (default): normal output.
+ * Level 1: suppress informational additionalContext (keep warnings/errors).
+ * Level 2: suppress all non-critical output (only blocks/critical errors).
+ * @returns {number} 0, 1, or 2.
+ */
+function getQuietLevel() {
+  return parseInt(process.env.OMB_QUIET || "0", 10) || 0;
+}
+
+module.exports = { readJson, writeJsonAtomic, hookOutput, getQuietLevel };

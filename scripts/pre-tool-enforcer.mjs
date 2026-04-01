@@ -29,6 +29,8 @@
 
 import { existsSync } from "fs";
 import { join } from "path";
+import { resolveStateDir } from "./state-tools/resolve-state-dir.mjs";
+import { readJson, getQuietLevel } from "./helpers.mjs";
 
 // --- Role Restrictions ---
 const BV = (name) => `mcp__beads-village__${name}`;
@@ -146,11 +148,14 @@ function extractFilePath(data) {
 }
 
 function emitDecision(decision, reason) {
+  const quiet = getQuietLevel();
+
   if (decision === "block") {
     // Claude Code's PreToolUse engine uses hookSpecificOutput.permissionDecision
     // to enforce tool blocking. 'deny' prevents the tool from executing.
     // Top-level decision:'block' is a fallback for older versions.
     // additionalContext kept so the model sees why it was blocked.
+    // Blocks are always emitted regardless of quiet level (critical).
     const output = {
       continue: true,
       decision: "block",
@@ -164,14 +169,20 @@ function emitDecision(decision, reason) {
     };
     process.stdout.write(JSON.stringify(output));
   } else if (decision === "warn") {
-    const output = {
-      continue: true,
-      hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        additionalContext: `WARNING: ${reason}`,
-      },
-    };
-    process.stdout.write(JSON.stringify(output));
+    // Warnings suppressed at quiet level 2
+    if (quiet >= 2) {
+      const output = { continue: true, hookSpecificOutput: { hookEventName: "PreToolUse" } };
+      process.stdout.write(JSON.stringify(output));
+    } else {
+      const output = {
+        continue: true,
+        hookSpecificOutput: {
+          hookEventName: "PreToolUse",
+          additionalContext: `WARNING: ${reason}`,
+        },
+      };
+      process.stdout.write(JSON.stringify(output));
+    }
   } else {
     const output = {
       continue: true,
@@ -195,9 +206,8 @@ process.stdin.on("end", () => {
   }
 
   const toolName = data.tool_name ?? data.toolName ?? "";
-  const role = detectRole(data);
 
-  // --- Bash safety checks (all roles) ---
+  // --- Bash safety checks (all roles, always active) ---
   if (toolName === "Bash") {
     const command = extractBashCommand(data);
     if (command) {
@@ -215,6 +225,23 @@ process.stdin.on("end", () => {
       }
     }
   }
+
+  // --- Inactive session early-return ---
+  // When no OMB_AGENT_ROLE is set (i.e., not a spawned subagent), check if
+  // there's an active OMB session. If not, skip all role enforcement.
+  // This avoids unnecessary work for every tool call outside OMB context.
+  // When OMB_AGENT_ROLE IS set, the agent was spawned by OMB — always enforce.
+  if (!process.env.OMB_AGENT_ROLE) {
+    const directory = data.cwd || data.directory || process.cwd();
+    const { stateDir } = resolveStateDir(directory, data);
+    const session = readJson(join(stateDir, "session.json"));
+    if (!session || !session.active) {
+      emitDecision("allow");
+      return;
+    }
+  }
+
+  const role = detectRole(data);
 
   // No role detected → allow
   if (!role) {

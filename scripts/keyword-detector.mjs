@@ -86,7 +86,7 @@ function ensureStateDirs() {
   ensureDir(getStateDir());
 }
 
-function writeSessionState(phase, mode = "mr.beads") {
+function writeSessionState(phase, mode = "mr.beads", intent = undefined) {
   ensureStateDirs();
   const state = {
     current_phase: phase,
@@ -96,8 +96,55 @@ function writeSessionState(phase, mode = "mr.beads") {
     reinforcement_count: 0,
     awaiting_confirmation: true,
   };
+  if (intent) state.intent = intent;
   const content = JSON.stringify(state, null, 2);
   writeFileSync(join(getStateDir(), "session.json"), content);
+}
+
+// --- Mr.Fast Intent Classification ---
+
+// Turbo: explicit file+line reference AND/OR explicit approach targeting a specific file
+const TURBO_PATTERNS = [
+  // file.ext:linenum — explicit file with line number
+  /[\w./\\-]+\.\w{1,5}\s*:\s*\d+/i,
+  // line N of/in file.ext — line number referencing a file
+  /\bline\s+\d+\s+(?:of|in)\s+[\w./\\-]+\.\w{1,5}\b/i,
+  // on line N of/in file.ext
+  /\bon\s+line\s+\d+\s+(?:of|in)\s+[\w./\\-]+\.\w{1,5}\b/i,
+  // fix/change/update X in file.ext — specific action targeting a specific file
+  /\b(?:fix|change|replace|update|remove|add|rename)\b.{0,60}\b(?:in|at|on)\s+[\w./\\-]+\.\w{1,5}\b/i,
+];
+
+// Complex: large-scope work → suggest Mr.Beads instead
+const COMPLEX_PATTERNS = [
+  /\brefactor\s+(?:the\s+)?entire\b/i,
+  /\bredesign\b/i,
+  /\brebuild\b/i,
+  /\bnew\s+system\b/i,
+  /\bmultiple\s+modules\b/i,
+  /\brewrite\s+(?:the\s+)?(?:entire|all|whole)\b/i,
+  /\boverhaul\b/i,
+  /\bfrom\s+scratch\b/i,
+];
+
+/**
+ * Classify the user's Mr.Fast prompt into an intent tier.
+ * @param {string} rawPrompt - The raw user prompt (before sanitization)
+ * @returns {"turbo"|"standard"|"complex"}
+ */
+function classifyFastIntent(rawPrompt) {
+  // Check complex first — complex overrides turbo
+  for (const pattern of COMPLEX_PATTERNS) {
+    if (pattern.test(rawPrompt)) return "complex";
+  }
+
+  // Check turbo patterns (explicit file + approach)
+  for (const pattern of TURBO_PATTERNS) {
+    if (pattern.test(rawPrompt)) return "turbo";
+  }
+
+  // Default to standard (safest path for ambiguous prompts)
+  return "standard";
 }
 
 function clearSessionState() {
@@ -163,10 +210,34 @@ process.stdin.on("end", () => {
     }
 
     if (kw.action === "invoke-fast") {
-      writeSessionState("fast_bootstrap", "mr.fast");
+      const intent = classifyFastIntent(raw);
+
+      if (intent === "complex") {
+        // Complex intent: do NOT activate session, suggest Mr.Beads instead
+        ensureStateDirs();
+        const state = {
+          current_phase: "fast_bootstrap",
+          active: false,
+          mode: "mr.fast",
+          intent: "complex",
+          started_at: new Date().toISOString(),
+          reinforcement_count: 0,
+        };
+        writeFileSync(join(getStateDir(), "session.json"), JSON.stringify(state, null, 2));
+        hookOutput(
+          `[MAGIC KEYWORD: mr-fast]\n\nThe request appears too complex for Mr.Fast (detected: large-scope work). ` +
+          `Consider using Mr.Beads instead for full planning and multi-agent execution:\n\n` +
+          `  omb ${raw.replace(/\b(?:mr\.?\s*fast|mrfast)\b/gi, "").trim()}\n\n` +
+          `If you still want Mr.Fast, rephrase with a narrower scope.`
+        );
+        return;
+      }
+
+      const phase = intent === "turbo" ? "fast_turbo" : "fast_scout";
+      writeSessionState(phase, "mr.fast", intent);
       const { augmented } = upgradePrompt(raw, { mode: "mr.fast" });
       hookOutput(
-        `[MAGIC KEYWORD: mr-fast]\n\nYou MUST invoke the skill using the Skill tool:\n\nSkill: oh-my-beads:mr-fast\n\nUser request:\n${augmented}\n\nIMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`
+        `[MAGIC KEYWORD: mr-fast]\n\nYou MUST invoke the skill using the Skill tool:\n\nSkill: oh-my-beads:mr-fast\n\nIntent: ${intent}\n\nUser request:\n${augmented}\n\nIMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`
       );
       return;
     }

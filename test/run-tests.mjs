@@ -934,7 +934,8 @@ test("mr.fast session state includes mode field", () => {
   const state = readState();
   assert(state, "session.json should exist");
   assert(state.mode === "mr.fast", `mode should be mr.fast, got ${state.mode}`);
-  assert(state.current_phase === "fast_bootstrap", `phase should be fast_bootstrap, got ${state.current_phase}`);
+  assert(state.intent === "standard", `intent should be standard, got ${state.intent}`);
+  assert(state.current_phase === "fast_scout", `phase should be fast_scout, got ${state.current_phase}`);
 });
 
 test("omb keyword still works and includes mode field", () => {
@@ -1237,9 +1238,9 @@ test("upgradePrompt returns clean enhanced prompt with guardrails", () => {
   assertNotContains(augmented, "Done Criteria:", "no Done Criteria label");
 });
 
-test("upgradePrompt caps intensity to Standard in mr.fast mode", () => {
+test("upgradePrompt caps intensity to Light in mr.fast mode", () => {
   const { intensity } = upgradePrompt("carefully debug the critical auth issue", { mode: "mr.fast" });
-  assert(intensity === "Standard", `mr.fast should cap at Standard, got ${intensity}`);
+  assert(intensity === "Light", `mr.fast should cap at Light, got ${intensity}`);
 });
 
 test("upgradePrompt allows Deep in mr.beads mode", () => {
@@ -2172,6 +2173,154 @@ test("OMB_QUIET=2 still emits blocks in pre-tool-enforcer (critical)", () => {
   // Blocks are critical — never suppressed
   assert(parsed?.decision === "block", "should still block dangerous commands at quiet=2");
   assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "should still show BLOCKED at quiet=2");
+});
+
+// ---- MR.FAST INTENT CLASSIFICATION ----
+
+console.log("\n=== keyword-detector.mjs (Mr.Fast Intent Classification) ===\n");
+
+test("turbo intent for explicit file+line prompt", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "mr.fast fix typo on line 42 of auth.ts" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "MAGIC KEYWORD: mr-fast", "should trigger mr-fast");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "Intent: turbo", "should classify as turbo");
+  const state = readState();
+  assert(state.intent === "turbo", `intent should be turbo, got ${state.intent}`);
+});
+
+test("turbo intent for file:linenum pattern", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "mr.fast fix src/auth.ts:42" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "Intent: turbo", "should classify file:linenum as turbo");
+  const state = readState();
+  assert(state.intent === "turbo", `intent should be turbo, got ${state.intent}`);
+});
+
+test("turbo intent for fix X in file.ext pattern", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "mr.fast fix the import in utils.mjs" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "Intent: turbo", "should classify fix-in-file as turbo");
+});
+
+test("standard intent for moderate fix without file+line", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "mr.fast fix the login validation bug" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "MAGIC KEYWORD: mr-fast", "should trigger mr-fast");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "Intent: standard", "should classify as standard");
+  const state = readState();
+  assert(state.intent === "standard", `intent should be standard, got ${state.intent}`);
+});
+
+test("standard intent for ambiguous prompt (defaults to standard)", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "mr.fast make it better" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "Intent: standard", "ambiguous should default to standard");
+  const state = readState();
+  assert(state.intent === "standard", `intent should be standard, got ${state.intent}`);
+});
+
+test("complex intent for 'refactor entire' keyword", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "mr.fast refactor entire auth module" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "MAGIC KEYWORD: mr-fast", "should trigger mr-fast");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "too complex for Mr.Fast", "should suggest Mr.Beads");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "omb", "should suggest omb command");
+});
+
+test("complex intent for 'redesign' keyword", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "mr.fast redesign the database layer" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "too complex for Mr.Fast", "redesign should be complex");
+});
+
+test("complex intent for 'new system' keyword", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "mrfast build a new system for notifications" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "too complex for Mr.Fast", "new system should be complex");
+});
+
+test("complex intent does NOT set active=true", () => {
+  resetState();
+  runScript("keyword-detector.mjs", { query: "mr.fast refactor entire auth module" });
+  const state = readState();
+  assert(state, "session.json should exist");
+  assert(state.active === false, `active should be false for complex intent, got ${state.active}`);
+  assert(state.intent === "complex", `intent should be complex, got ${state.intent}`);
+  assert(state.mode === "mr.fast", `mode should be mr.fast, got ${state.mode}`);
+});
+
+// ---- MR.FAST TURBO SESSION STATE ----
+
+console.log("\n=== keyword-detector.mjs (Mr.Fast Turbo Session State) ===\n");
+
+test("turbo sets current_phase to fast_turbo", () => {
+  resetState();
+  runScript("keyword-detector.mjs", { query: "mr.fast fix typo on line 10 of app.ts" });
+  const state = readState();
+  assert(state, "session.json should exist");
+  assert(state.current_phase === "fast_turbo", `phase should be fast_turbo, got ${state.current_phase}`);
+  assert(state.mode === "mr.fast", `mode should be mr.fast, got ${state.mode}`);
+  assert(state.intent === "turbo", `intent should be turbo, got ${state.intent}`);
+  assert(state.active === true, `active should be true for turbo, got ${state.active}`);
+});
+
+test("standard sets current_phase to fast_scout", () => {
+  resetState();
+  runScript("keyword-detector.mjs", { query: "mr.fast fix the routing issue" });
+  const state = readState();
+  assert(state, "session.json should exist");
+  assert(state.current_phase === "fast_scout", `phase should be fast_scout, got ${state.current_phase}`);
+  assert(state.mode === "mr.fast", `mode should be mr.fast, got ${state.mode}`);
+  assert(state.intent === "standard", `intent should be standard, got ${state.intent}`);
+  assert(state.active === true, `active should be true for standard, got ${state.active}`);
+});
+
+test("turbo session state has awaiting_confirmation", () => {
+  resetState();
+  runScript("keyword-detector.mjs", { query: "mr.fast remove unused import in server.ts" });
+  const state = readState();
+  assert(state.awaiting_confirmation === true, "turbo should have awaiting_confirmation");
+  assert(state.reinforcement_count === 0, "should start with 0 reinforcements");
+});
+
+// ---- PROMPT-LEVERAGE LIGHT INTENSITY CAP ----
+
+console.log("\n=== prompt-leverage.mjs (Light Intensity Cap for Mr.Fast) ===\n");
+
+test("mr.fast caps Standard coding intensity to Light", () => {
+  // "fix the login bug" → coding task → normally Standard → Mr.Fast caps to Light
+  const { intensity, task } = upgradePrompt("fix the login bug", { mode: "mr.fast" });
+  assert(task === "coding", `task should be coding, got ${task}`);
+  assert(intensity === "Light", `mr.fast coding should cap at Light, got ${intensity}`);
+});
+
+test("mr.fast Light produces shorter output than Standard", () => {
+  const prompt = "fix the login bug in auth.ts";
+  const { augmented: lightOutput } = upgradePrompt(prompt, { mode: "mr.fast" });
+  const { augmented: standardOutput } = upgradePrompt(prompt, { mode: "mr.beads" });
+  // Mr.Fast (Light) should produce shorter output than Mr.Beads (Standard)
+  assert(
+    lightOutput.length < standardOutput.length,
+    `Light output (${lightOutput.length} chars) should be shorter than Standard output (${standardOutput.length} chars)`
+  );
+});
+
+test("mr.fast Light omits first-principles reasoning block", () => {
+  const { augmented } = upgradePrompt("fix the login bug", { mode: "mr.fast" });
+  assertNotContains(augmented, "Understand the problem broadly first", "Light should omit deep-reasoning block");
+});
+
+test("mr.beads Standard includes first-principles reasoning block", () => {
+  const { augmented } = upgradePrompt("fix the login bug", { mode: "mr.beads" });
+  assertContains(augmented, "Understand the problem broadly first", "Standard should include deep-reasoning block");
 });
 
 // ============================================================

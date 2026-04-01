@@ -122,9 +122,9 @@ export function upgradePrompt(rawPrompt, options = {}) {
   const task = options.task || detectTask(normalized);
   let intensity = inferIntensity(normalized, task);
 
-  // Mr.Fast should favor lighter intensity — speed over thoroughness
-  if (options.mode === "mr.fast" && intensity === "Deep") {
-    intensity = "Standard";
+  // Mr.Fast caps at Light intensity — speed over thoroughness
+  if (options.mode === "mr.fast" && (intensity === "Deep" || intensity === "Standard")) {
+    intensity = "Light";
   }
 
   const toolRules = buildToolRules(task);

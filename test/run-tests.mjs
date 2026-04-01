@@ -2974,6 +2974,103 @@ test("statusline handles session without intent field", () => {
   assertContains(clean, "Phase 5: Execution", "should display phase without crashing on missing intent");
 });
 
+// ---- CANCEL DURING PHASE-AT-A-TIME LOOP (VAL-CROSS-023) ----
+
+console.log("\n=== Cancel During Phase-at-a-Time Loop ===\n");
+
+test("cancel omb during phase_3_decomposition (loop iteration start)", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_3_decomposition",
+    started_at: new Date().toISOString(),
+    reinforcement_count: 5,
+  });
+  const { output } = runScript("keyword-detector.mjs", { query: "cancel omb" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "cancel-omb", "cancel should trigger during decomposition");
+  const state = readState();
+  assert(state.active === false, "session should be deactivated after cancel during decomposition");
+  assert(state.current_phase === "cancelled", "phase should be cancelled");
+  assert(state.cancelled_at, "cancelled_at timestamp should be set");
+});
+
+test("cancel omb during phase_6_review (before next loop iteration)", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_6_review",
+    started_at: new Date().toISOString(),
+    reinforcement_count: 10,
+  });
+  const { output } = runScript("keyword-detector.mjs", { query: "cancel omb" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "cancel-omb", "cancel should trigger during review");
+  const state = readState();
+  assert(state.active === false, "session should be deactivated after cancel during review");
+  assert(state.current_phase === "cancelled", "phase should be cancelled after review cancel");
+});
+
+test("cancel omb during phase_5_execution (mid-loop)", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_5_execution",
+    started_at: new Date().toISOString(),
+    reinforcement_count: 3,
+  });
+  const { output } = runScript("keyword-detector.mjs", { query: "cancel omb" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "cancel-omb", "cancel should trigger during execution");
+  const state = readState();
+  assert(state.active === false, "session should be deactivated after cancel during execution");
+  assert(state.current_phase === "cancelled", "phase should be cancelled during execution");
+  // Verify cancel signal file exists with valid TTL
+  const signalPath = join(STATE_DIR, "cancel-signal.json");
+  assert(existsSync(signalPath), "cancel-signal.json should exist for persistent-mode to honor");
+  const signal = JSON.parse(readFileSync(signalPath, "utf8"));
+  assert(new Date(signal.expires_at).getTime() > Date.now(), "cancel signal should have future expiry");
+});
+
+test("persistent-mode allows stop after cancel during phase-at-a-time loop", () => {
+  resetState();
+  // Simulate cancel: session cancelled + cancel signal with valid TTL
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_5_execution",
+    started_at: new Date().toISOString(),
+    reinforcement_count: 5,
+    cancel_requested: true,
+  });
+  const { output } = runScript("persistent-mode.cjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(!parsed?.decision || parsed.decision !== "block", "persistent-mode should allow stop when cancel_requested during loop");
+});
+
+test("cancel during gate_3_pending (between validation and execution)", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "gate_3_pending",
+    started_at: new Date().toISOString(),
+  });
+  const { output } = runScript("keyword-detector.mjs", { query: "cancel omb" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "cancel-omb", "cancel should work at gate_3_pending");
+  const state = readState();
+  assert(state.active === false, "session should be deactivated at gate");
+  assert(state.current_phase === "cancelled", "phase should be cancelled at gate");
+});
+
+test("session-end handles cancelled phase-at-a-time session gracefully", () => {
+  resetState();
+  writeState({
+    active: false, mode: "mr.beads", current_phase: "cancelled",
+    started_at: new Date().toISOString(),
+    cancelled_at: new Date().toISOString(),
+  });
+  const { output } = runScript("session-end.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "session-end should continue for cancelled session");
+  const state = readState();
+  assert(state.active === false, "cancelled session should remain inactive after session-end");
+});
+
 // ============================================================
 // SUMMARY
 // ============================================================

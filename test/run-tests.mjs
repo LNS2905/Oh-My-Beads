@@ -2358,6 +2358,202 @@ test("session-start mr.fast resume shows feature slug", () => {
   assertContains(ctx, "fast_turbo", "should show turbo phase in resume");
 });
 
+// ---- PERSISTENT MODE: FAST TURBO ----
+
+console.log("\n=== persistent-mode.cjs (Fast Turbo) ===\n");
+
+test("blocks stop during fast_turbo phase", () => {
+  writeState({
+    active: true, current_phase: "fast_turbo", mode: "mr.fast",
+    started_at: new Date().toISOString(),
+    last_checked_at: new Date().toISOString(),
+    reinforcement_count: 0,
+  });
+  const { output } = runScript("persistent-mode.cjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.decision === "block", "should block stop during fast_turbo");
+  assertContains(parsed?.reason || "", "Mr.Fast", "should mention Mr.Fast in block message");
+  assertContains(parsed?.reason || "", "fast_turbo", "should mention fast_turbo phase");
+});
+
+test("fast_turbo block message includes continuation guidance", () => {
+  writeState({
+    active: true, current_phase: "fast_turbo", mode: "mr.fast",
+    started_at: new Date().toISOString(),
+    last_checked_at: new Date().toISOString(),
+    reinforcement_count: 0,
+  });
+  const { output } = runScript("persistent-mode.cjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.reason || "", "Turbo", "should contain turbo continuation guidance");
+});
+
+// ---- STATUSLINE: FAST TURBO ----
+
+console.log("\n=== statusline.mjs (Fast Turbo) ===\n");
+
+test("shows fast_turbo as 'Turbo ⚡'", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.fast", current_phase: "fast_turbo",
+    started_at: new Date().toISOString(), failure_count: 0,
+  });
+  const output = runStatusline({ cwd: TEMP_DIR });
+  const clean = stripAnsi(output);
+  assertContains(clean, "Turbo", "should show Turbo label");
+  assertContains(clean, "⚡", "should show lightning bolt emoji");
+  assertContains(clean, "Mr.Fast", "should show Mr.Fast mode");
+});
+
+test("fast_turbo uses cyan color", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.fast", current_phase: "fast_turbo",
+    started_at: new Date().toISOString(), failure_count: 0,
+  });
+  const output = runStatusline({ cwd: TEMP_DIR });
+  assertContains(output, "\x1b[36m", "fast_turbo should use cyan ANSI color");
+});
+
+// ---- MODE CONFLICT PREVENTION ----
+
+console.log("\n=== keyword-detector.mjs (Mode Conflict Prevention) ===\n");
+
+test("blocks mr.fast when mr.beads session is active", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.beads", current_phase: "phase_2_planning",
+    started_at: new Date().toISOString(),
+  });
+  const { output } = runScript("keyword-detector.mjs", { query: "mr.fast fix a bug" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "MODE CONFLICT", "should warn about mode conflict");
+  assertContains(ctx, "Mr.Beads", "should mention active Mr.Beads session");
+  assertContains(ctx, "cancel omb", "should suggest cancelling current session");
+  assertNotContains(ctx, "MAGIC KEYWORD: mr-fast", "should NOT trigger mr-fast keyword");
+});
+
+test("blocks omb when mr.fast session is active", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.fast", current_phase: "fast_execution",
+    started_at: new Date().toISOString(),
+  });
+  const { output } = runScript("keyword-detector.mjs", { query: "omb build a REST API" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "MODE CONFLICT", "should warn about mode conflict");
+  assertContains(ctx, "Mr.Fast", "should mention active Mr.Fast session");
+  assertContains(ctx, "cancel mrfast", "should suggest cancelling current mr.fast session");
+  assertNotContains(ctx, "MAGIC KEYWORD: oh-my-beads", "should NOT trigger omb keyword");
+});
+
+test("allows mr.fast when no active session exists", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "mr.fast fix a bug" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "MAGIC KEYWORD: mr-fast", "should trigger mr-fast when no active session");
+  assertNotContains(ctx, "MODE CONFLICT", "should NOT warn when no conflict");
+});
+
+test("allows omb when mr.fast session is inactive (completed)", () => {
+  resetState();
+  writeState({
+    active: false, mode: "mr.fast", current_phase: "fast_complete",
+    started_at: new Date().toISOString(),
+  });
+  const { output } = runScript("keyword-detector.mjs", { query: "omb build me a feature" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "MAGIC KEYWORD: oh-my-beads", "should allow omb when mr.fast is inactive");
+  assertNotContains(ctx, "MODE CONFLICT", "should NOT warn when inactive session");
+});
+
+test("blocks mr.beads keyword when mr.fast is active", () => {
+  resetState();
+  writeState({
+    active: true, mode: "mr.fast", current_phase: "fast_turbo",
+    started_at: new Date().toISOString(),
+  });
+  const { output } = runScript("keyword-detector.mjs", { query: "mr.beads build a REST API" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "MODE CONFLICT", "mr.beads should be blocked during active mr.fast");
+});
+
+// ---- CANCEL FOR MR.FAST TURBO ----
+
+console.log("\n=== keyword-detector.mjs (Cancel Mr.Fast Turbo) ===\n");
+
+test("cancel mrfast works during fast_turbo phase", () => {
+  writeState({
+    active: true, current_phase: "fast_turbo", mode: "mr.fast", intent: "turbo",
+    started_at: new Date().toISOString(),
+  });
+  const { output } = runScript("keyword-detector.mjs", { query: "cancel mrfast" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "cancel-omb", "cancel should work during turbo");
+  const state = readState();
+  assert(state.active === false, "session should be deactivated after cancel");
+  assert(state.current_phase === "cancelled", "phase should be cancelled");
+});
+
+test("cancel mr.fast works during fast_turbo phase", () => {
+  writeState({
+    active: true, current_phase: "fast_turbo", mode: "mr.fast", intent: "turbo",
+    started_at: new Date().toISOString(),
+  });
+  const { output } = runScript("keyword-detector.mjs", { query: "cancel mr.fast" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "cancel-omb", "cancel mr.fast should work during turbo");
+});
+
+test("stop mrfast works during fast_turbo phase", () => {
+  writeState({
+    active: true, current_phase: "fast_turbo", mode: "mr.fast", intent: "turbo",
+    started_at: new Date().toISOString(),
+  });
+  const { output } = runScript("keyword-detector.mjs", { query: "stop mrfast" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "cancel-omb", "stop mrfast should work during turbo");
+  const state = readState();
+  assert(state.active === false, "session should be deactivated after stop");
+});
+
+// ---- CONTEXT GUARD: FAST TURBO ----
+
+console.log("\n=== context-guard-stop.mjs (Fast Turbo) ===\n");
+
+test("context-guard passes through for active fast_turbo session (no context pressure)", () => {
+  resetState();
+  writeState({
+    active: true, current_phase: "fast_turbo", mode: "mr.fast",
+    started_at: new Date().toISOString(),
+  });
+  const { output } = runScript("context-guard-stop.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should pass through (let persistent-mode handle it)");
+  assert(parsed?.suppressOutput === true, "should suppress output");
+});
+
+// ---- SESSION END: FAST TURBO ----
+
+console.log("\n=== session-end.mjs (Fast Turbo) ===\n");
+
+test("session-end preserves fast_turbo as critical phase", () => {
+  resetState();
+  writeState({
+    active: true, current_phase: "fast_turbo", mode: "mr.fast",
+    started_at: new Date().toISOString(),
+  });
+  runScript("session-end.mjs", { cwd: TEMP_DIR });
+  const state = readState();
+  assert(state.active === true, "fast_turbo should remain active (critical phase)");
+  assert(state.session_ended_at, "should still note session end time");
+});
+
 // ============================================================
 // SUMMARY
 // ============================================================

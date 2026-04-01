@@ -147,6 +147,16 @@ function classifyFastIntent(rawPrompt) {
   return "standard";
 }
 
+function readCurrentSession() {
+  const sessionFile = join(getStateDir(), "session.json");
+  if (!existsSync(sessionFile)) return null;
+  try {
+    return JSON.parse(readFileSync(sessionFile, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
 function clearSessionState() {
   const stateDir = getStateDir();
   const sessionFile = join(stateDir, "session.json");
@@ -210,6 +220,18 @@ process.stdin.on("end", () => {
     }
 
     if (kw.action === "invoke-fast") {
+      // Mode conflict: block Mr.Fast if Mr.Beads is active
+      const currentSession = readCurrentSession();
+      if (currentSession?.active && currentSession.mode === "mr.beads") {
+        const phase = currentSession.current_phase || "unknown";
+        hookOutput(
+          `[MODE CONFLICT] Cannot start Mr.Fast — an active Mr.Beads session is in progress ` +
+          `(phase: ${phase}). Cancel the current session first with "cancel omb", ` +
+          `or wait for it to complete.`
+        );
+        return;
+      }
+
       const intent = classifyFastIntent(raw);
 
       if (intent === "complex") {
@@ -243,6 +265,19 @@ process.stdin.on("end", () => {
     }
 
     // Activate Mr.Beads (default mode)
+    // Mode conflict: block Mr.Beads if Mr.Fast is active
+    {
+      const currentSession = readCurrentSession();
+      if (currentSession?.active && currentSession.mode === "mr.fast") {
+        const phase = currentSession.current_phase || "unknown";
+        hookOutput(
+          `[MODE CONFLICT] Cannot start Mr.Beads — an active Mr.Fast session is in progress ` +
+          `(phase: ${phase}). Cancel the current session first with "cancel mrfast", ` +
+          `or wait for it to complete.`
+        );
+        return;
+      }
+    }
     writeSessionState("bootstrap", "mr.beads");
     const { augmented } = upgradePrompt(raw, { mode: "mr.beads" });
     hookOutput(

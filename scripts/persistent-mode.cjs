@@ -83,6 +83,7 @@ const PHASE_CONTINUATIONS = {
   // Mr.Fast phases (lightweight workflow)
   "fast_bootstrap":           "Continue Mr.Fast: Spawn Fast Scout for rapid analysis.",
   "fast_scout":               "Continue Mr.Fast: Scout is analyzing the issue. Wait for analysis summary.",
+  "fast_turbo":               "Continue Mr.Fast Turbo: Executor is implementing the fix directly. Wait for completion.",
   "fast_execution":           "Continue Mr.Fast: Executor is implementing the fix. Wait for completion.",
 };
 

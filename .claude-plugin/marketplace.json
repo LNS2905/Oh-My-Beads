@@ -1,7 +1,5 @@
 {
-  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "oh-my-beads",
-  "description": "Multi-agent orchestration using beads_village — Scout, Architect, Worker, Reviewer under a Master Orchestrator",
   "owner": {
     "name": "sangnhat",
     "url": "https://github.com/LNS2905"
@@ -10,7 +8,7 @@
     {
       "name": "oh-my-beads",
       "description": "Multi-agent orchestration plugin for Claude Code with 8-step workflow, 3 HITL gates, and beads_village concurrency management",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "author": {
         "name": "sangnhat"
       },
@@ -19,17 +17,5 @@
       "homepage": "https://github.com/LNS2905/oh-my-beads",
       "tags": ["multi-agent", "orchestration", "beads-village", "task-tracking", "workflow"]
     }
-  ],
-  "version": "1.1.0",
-  "features": [
-    "Mr.Beads: 8-step autonomous workflow with 3 HITL gates for complex features",
-    "Mr.Fast: 2-step lightweight workflow for quick fixes and small changes",
-    "12 specialized agents (Scout, Architect, Worker, Reviewer, and more)",
-    "16 skills including validation, swarming, compounding, and debugging",
-    "beads_village MCP integration for task tracking and file locking",
-    "Automatic prompt leverage to strengthen user prompts before agent routing",
-    "Compounding learning flywheel across sessions",
-    "Role-based tool enforcement and Bash safety via hooks"
-  ],
-  "onboarding": "Say 'omb build me X' for the full 8-step workflow or 'mr.fast fix Y' for quick fixes. Run 'setup omb' to initialize your workspace. See /oh-my-beads:doctor if anything goes wrong."
+  ]
 }

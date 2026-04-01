@@ -1,6 +1,6 @@
 {
   "name": "oh-my-beads",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Multi-agent orchestration plugin for Claude Code. Combines role-based specialization (Scout, Architect, Worker, Reviewer) under a Master Orchestrator, using beads_village for task tracking and concurrency safety.",
   "author": {
     "name": "sangnhat",
@@ -9,8 +9,14 @@
   "repository": "https://github.com/LNS2905/oh-my-beads",
   "homepage": "https://github.com/LNS2905/oh-my-beads",
   "license": "MIT",
-  "keywords": ["claude-code", "plugin", "multi-agent", "orchestration", "beads-village", "task-management"],
-  "skills": "./skills/",
+  "keywords": [
+    "claude-code",
+    "plugin",
+    "multi-agent",
+    "orchestration",
+    "beads-village",
+    "task-management"
+  ],
   "agents": [
     "./agents/master.md",
     "./agents/scout.md",
@@ -25,7 +31,14 @@
     "./agents/security-reviewer.md",
     "./agents/test-engineer.md"
   ],
-  "hooks": "./hooks/hooks.json",
+  "skills": "./skills/",
   "setup": "./skills/setup/SKILL.md",
-  "mcpServers": "./.mcp.json"
+  "mcpServers": "./.mcp.json",
+  "prerequisites": {
+    "node": ">=18.0.0",
+    "beads-village": {
+      "description": "MCP server for task tracking and file locking",
+      "install": "See https://github.com/LNS2905/oh-my-beads#prerequisites"
+    }
+  }
 }

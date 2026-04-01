@@ -2554,6 +2554,130 @@ test("session-end preserves fast_turbo as critical phase", () => {
   assert(state.session_ended_at, "should still note session end time");
 });
 
+// ---- PRE-COMPACT: MR.FAST SESSIONS (VAL-CROSS-010) ----
+
+console.log("\n=== pre-compact.mjs (Mr.Fast Sessions) ===\n");
+
+test("pre-compact writes checkpoint for mr.fast standard session", () => {
+  resetState();
+  writeState({
+    active: true, current_phase: "fast_scout", mode: "mr.fast",
+    intent: "standard",
+    started_at: new Date().toISOString(), feature_slug: "fast-compact-test",
+  });
+  const { output } = runScript("pre-compact.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "Pre-compaction checkpoint", "checkpoint msg for mr.fast");
+  assert(existsSync(join(STATE_DIR, "checkpoint.json")), "checkpoint.json exists for mr.fast");
+  const checkpoint = JSON.parse(readFileSync(join(STATE_DIR, "checkpoint.json"), "utf8"));
+  assert(checkpoint.reason === "pre_compaction", "checkpoint reason");
+  assert(checkpoint.session.mode === "mr.fast", "mode preserved in checkpoint");
+  assert(checkpoint.session.intent === "standard", "intent preserved in checkpoint");
+  assert(checkpoint.session.feature_slug === "fast-compact-test", "feature preserved in checkpoint");
+});
+
+test("pre-compact writes checkpoint for mr.fast turbo session", () => {
+  resetState();
+  writeState({
+    active: true, current_phase: "fast_turbo", mode: "mr.fast",
+    intent: "turbo",
+    started_at: new Date().toISOString(), feature_slug: "turbo-compact-test",
+  });
+  const { output } = runScript("pre-compact.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "Pre-compaction checkpoint", "checkpoint msg for turbo");
+  const checkpoint = JSON.parse(readFileSync(join(STATE_DIR, "checkpoint.json"), "utf8"));
+  assert(checkpoint.session.current_phase === "fast_turbo", "turbo phase in checkpoint");
+  assert(checkpoint.session.mode === "mr.fast", "mr.fast mode in checkpoint");
+});
+
+test("pre-compact systemMessage mentions Mr.Fast for mr.fast sessions", () => {
+  resetState();
+  writeState({
+    active: true, current_phase: "fast_execution", mode: "mr.fast",
+    started_at: new Date().toISOString(), feature_slug: "fast-sysmsg",
+  });
+  const { output } = runScript("pre-compact.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.systemMessage, "should include systemMessage");
+  assertContains(parsed.systemMessage, "Mr.Fast", "systemMessage should mention Mr.Fast mode");
+  assertContains(parsed.systemMessage, "Continue the Mr.Fast workflow", "systemMessage should have Mr.Fast resume instruction");
+});
+
+test("pre-compact writes handoff for mr.fast session", () => {
+  resetState();
+  writeState({
+    active: true, current_phase: "fast_turbo", mode: "mr.fast",
+    started_at: new Date().toISOString(), feature_slug: "turbo-handoff",
+  });
+  runScript("pre-compact.mjs", { cwd: TEMP_DIR });
+  const handoffs = readdirSync(HANDOFFS_DIR).filter(f => f.startsWith("pre-compact-"));
+  assert(handoffs.length > 0, "handoff file should exist for mr.fast");
+  const content = readFileSync(join(HANDOFFS_DIR, handoffs[0]), "utf8");
+  assertContains(content, "fast_turbo", "handoff contains mr.fast phase");
+});
+
+// ---- SUBAGENT STOP: MR.FAST AGENTS (VAL-CROSS-012) ----
+
+console.log("\n=== Consolidated SubagentStop (Mr.Fast Agents) ===\n");
+
+test("SubagentStop handles fast-scout agent correctly", () => {
+  resetState();
+  writeFileSync(join(STATE_DIR, "subagent-tracking.json"), JSON.stringify({
+    agents: [{ id: "fast-scout-001", role: "fast-scout", started_at: new Date().toISOString(), status: "running" }],
+  }, null, 2));
+  const { output } = runScript("subagent-stop.mjs", {
+    cwd: TEMP_DIR, hook_event_name: "SubagentStop",
+    agent_id: "fast-scout-001", role: "fast-scout", exit_code: 0,
+  });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should continue");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "fast-scout", "should mention fast-scout role");
+  // Verify tracking was updated
+  const tracking = JSON.parse(readFileSync(join(STATE_DIR, "subagent-tracking.json"), "utf8"));
+  const agent = tracking.agents.find(a => a.id === "fast-scout-001");
+  assert(agent.status === "stopped", "fast-scout agent status should be stopped");
+});
+
+test("SubagentStop handles executor agent correctly", () => {
+  resetState();
+  writeFileSync(join(STATE_DIR, "subagent-tracking.json"), JSON.stringify({
+    agents: [{ id: "executor-001", role: "executor", started_at: new Date().toISOString(), status: "running" }],
+  }, null, 2));
+  const { output } = runScript("subagent-stop.mjs", {
+    cwd: TEMP_DIR, hook_event_name: "SubagentStop",
+    agent_id: "executor-001", role: "executor", exit_code: 0,
+  });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should continue");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "executor", "should mention executor role");
+  const tracking = JSON.parse(readFileSync(join(STATE_DIR, "subagent-tracking.json"), "utf8"));
+  const agent = tracking.agents.find(a => a.id === "executor-001");
+  assert(agent.status === "stopped", "executor agent status should be stopped");
+});
+
+test("SubagentStop detects fast-scout role from agent_type", () => {
+  resetState();
+  const { output } = runScript("subagent-stop.mjs", {
+    cwd: TEMP_DIR, hook_event_name: "SubagentStop",
+    agent_id: "fs-auto-001", agent_type: "oh-my-beads:fast-scout", exit_code: 0,
+  });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should continue");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "fast-scout", "should detect fast-scout from agent_type");
+});
+
+test("SubagentStop detects executor role from agent_type", () => {
+  resetState();
+  const { output } = runScript("subagent-stop.mjs", {
+    cwd: TEMP_DIR, hook_event_name: "SubagentStop",
+    agent_id: "exec-auto-001", agent_type: "oh-my-beads:executor", exit_code: 0,
+  });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should continue");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "executor", "should detect executor from agent_type");
+});
+
 // ============================================================
 // SUMMARY
 // ============================================================

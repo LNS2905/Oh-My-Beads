@@ -192,7 +192,24 @@ Read .claude-plugin/marketplace.json → version, plugins[0].version
 **If all match:** CHECK versions ... PASS (v{version})
 **If mismatch:** CHECK versions ... WARNING (plugin.json: {a}, marketplace.json: {b})
 
-### A11. Report Summary
+### A11. Check Statusline Configuration
+
+```
+Read ~/.claude/settings.json
+```
+
+Check if the file contains a `statusLine` entry pointing to the Oh-My-Beads statusline script.
+
+Determine the plugin root path (the directory containing `scripts/statusline.mjs`). Build the
+expected command: `"node <plugin-root>/scripts/statusline.mjs"` where `<plugin-root>` is the
+absolute path to the plugin directory (e.g., `/home/user/.claude/plugins/oh-my-beads` or the
+local development path).
+
+**If `statusLine` exists AND command contains `statusline.mjs` from this plugin:** CHECK statusline ... PASS
+**If `statusLine` exists BUT command points to a different (non-OMB) script:** CHECK statusline ... SKIP (non-OMB statusline configured — will not overwrite)
+**If `statusLine` is missing or `~/.claude/settings.json` does not exist:** CHECK statusline ... MISSING (will auto-configure in Phase B)
+
+### A12. Report Summary
 
 Present all results:
 
@@ -211,8 +228,9 @@ Present all results:
 | A8 | Artifact dirs          | PASS    | plans/, history/              |
 | A9 | CLAUDE.md OMB section  | MISSING |                               |
 | A10| Version consistency    | PASS    | v1.2.0                        |
+| A11| Statusline             | MISSING | Not configured in settings    |
 
-Items to configure: 4
+Items to configure: 5
 ```
 
 **If all PASS:** "Oh-My-Beads is fully configured. No changes needed." → STOP.
@@ -319,6 +337,38 @@ Note: Runtime state is at `~/.oh-my-beads/` (system-level) so no gitignore neede
 
 Report: FIXED artifact dirs ... plans/, history/ created
 
+### B5. Configure Statusline
+
+**Only if A11 was MISSING.**
+
+Determine the absolute path to the Oh-My-Beads plugin root directory (the directory that contains
+`scripts/statusline.mjs`). Build the statusline command:
+
+```
+node <absolute-plugin-root>/scripts/statusline.mjs
+```
+
+Read `~/.claude/settings.json` (or create `{}` if it does not exist).
+
+Add the `statusLine` entry:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "node <absolute-plugin-root>/scripts/statusline.mjs"
+  }
+}
+```
+
+**Important constraints:**
+- The path MUST be absolute (e.g., `/home/user/.claude/plugins/oh-my-beads/scripts/statusline.mjs`)
+- Preserve ALL existing keys in `~/.claude/settings.json` — only add/update the `statusLine` key
+- This is auto-configured without asking the user (no AskUserQuestion needed)
+- If `statusLine` already points to a non-OMB command (A11 was SKIP), do NOT overwrite — warn the user instead
+
+Report: FIXED statusline ... HUD configured in ~/.claude/settings.json
+
 ---
 
 ## Phase C: Configure + Finalize
@@ -404,6 +454,7 @@ this file first and offers a quick-update path instead of the full wizard.
 | .mcp.json              | FIXED  |
 | Hooks wiring           | FIXED  |
 | Artifact dirs          | PASS   |
+| Statusline             | FIXED  |
 | CLAUDE.md              | FIXED  |
 
 Oh-My-Beads v{version} is ready!

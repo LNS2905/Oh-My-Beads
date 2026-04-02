@@ -3956,6 +3956,369 @@ test("<remember> appends multiple entries", () => {
   assert(separatorCount >= 2, `should have at least 2 separators, got ${separatorCount}`);
 });
 
+// ---- SKILL INJECTOR: DISCOVERY ----
+
+console.log("\n=== skill-injector.mjs (Skill Discovery) ===\n");
+
+test("discovers skills from project .oh-my-beads/skills/ directory", () => {
+  resetState();
+  // Create a project-level skill file
+  const skillsDir = join(TEMP_DIR, ".oh-my-beads", "skills");
+  mkdirSync(skillsDir, { recursive: true });
+  writeFileSync(join(skillsDir, "auth-fix.md"), `---
+name: auth-fix
+description: Fix common auth token issues
+triggers:
+  - auth
+  - token
+  - jwt
+source: project
+tags:
+  - security
+  - auth
+---
+# Problem
+Auth tokens expire silently.
+
+# Solution
+Check token expiry before API calls.
+`);
+  const { output } = runScript("skill-injector.mjs", { query: "fix the auth token issue", cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should continue");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "auth-fix", "should inject matching skill");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "omb-learned-skills", "should wrap in omb-learned-skills tags");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "Auth tokens expire silently", "should include skill body");
+  // Clean up
+  rmSync(skillsDir, { recursive: true, force: true });
+});
+
+test("discovers skills from global ~/.oh-my-beads/skills/ directory", () => {
+  resetState();
+  // Create a global skill file (under OMB_HOME)
+  const globalSkillsDir = join(OMB_HOME, "skills");
+  mkdirSync(globalSkillsDir, { recursive: true });
+  writeFileSync(join(globalSkillsDir, "cors-fix.md"), `---
+name: cors-fix
+description: Fix CORS configuration issues
+triggers:
+  - cors
+  - cross-origin
+source: global
+tags:
+  - networking
+---
+# Problem
+CORS headers missing in API responses.
+
+# Solution
+Add proper CORS middleware with allowed origins.
+`);
+  const { output } = runScript("skill-injector.mjs", { query: "fix the cors issue", cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "cors-fix", "should inject global skill");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "CORS headers missing", "should include global skill body");
+  // Clean up
+  rmSync(globalSkillsDir, { recursive: true, force: true });
+});
+
+// ---- SKILL INJECTOR: TRIGGER MATCHING ----
+
+console.log("\n=== skill-injector.mjs (Trigger Matching) ===\n");
+
+test("matches triggers case-insensitively", () => {
+  resetState();
+  const skillsDir = join(TEMP_DIR, ".oh-my-beads", "skills");
+  mkdirSync(skillsDir, { recursive: true });
+  writeFileSync(join(skillsDir, "db-fix.md"), `---
+name: db-fix
+description: Fix database connection issues
+triggers:
+  - database
+  - postgres
+source: project
+tags: []
+---
+# Problem
+Connection pool exhaustion.
+
+# Solution
+Use connection pooling with max limit.
+`);
+  // Use uppercase in query, triggers are lowercase
+  const { output } = runScript("skill-injector.mjs", { query: "fix the DATABASE connection", cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "db-fix", "should match case-insensitively");
+  rmSync(skillsDir, { recursive: true, force: true });
+});
+
+test("scores skills by number of trigger matches (more matches = higher score)", () => {
+  resetState();
+  const skillsDir = join(TEMP_DIR, ".oh-my-beads", "skills");
+  mkdirSync(skillsDir, { recursive: true });
+  // Skill A: 1 trigger match
+  writeFileSync(join(skillsDir, "skill-a.md"), `---
+name: skill-a
+description: One trigger match
+triggers:
+  - auth
+  - unrelated-pattern
+source: project
+tags: []
+---
+# Problem
+A problem.
+
+# Solution
+A solution.
+`);
+  // Skill B: 2 trigger matches
+  writeFileSync(join(skillsDir, "skill-b.md"), `---
+name: skill-b
+description: Two trigger matches
+triggers:
+  - auth
+  - token
+source: project
+tags: []
+---
+# Problem
+B problem.
+
+# Solution
+B solution.
+`);
+  const { output } = runScript("skill-injector.mjs", { query: "fix the auth token issue", cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  // skill-b should appear before skill-a because it has more trigger matches
+  const posB = ctx.indexOf("skill-b");
+  const posA = ctx.indexOf("skill-a");
+  assert(posB !== -1, "skill-b should be present");
+  assert(posA !== -1, "skill-a should be present");
+  assert(posB < posA, `skill-b (pos ${posB}) should appear before skill-a (pos ${posA}) due to higher score`);
+  rmSync(skillsDir, { recursive: true, force: true });
+});
+
+test("does not inject skills with no trigger matches", () => {
+  resetState();
+  const skillsDir = join(TEMP_DIR, ".oh-my-beads", "skills");
+  mkdirSync(skillsDir, { recursive: true });
+  writeFileSync(join(skillsDir, "unrelated.md"), `---
+name: unrelated-skill
+description: No matching triggers
+triggers:
+  - kubernetes
+  - docker
+source: project
+tags: []
+---
+# Problem
+Container orchestration.
+
+# Solution
+Use Kubernetes.
+`);
+  const { output } = runScript("skill-injector.mjs", { query: "fix the auth token issue", cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  // No triggers match → no injection
+  assert(!parsed?.hookSpecificOutput?.additionalContext, "should not inject when no triggers match");
+  rmSync(skillsDir, { recursive: true, force: true });
+});
+
+// ---- SKILL INJECTOR: INJECTION FORMAT ----
+
+console.log("\n=== skill-injector.mjs (Injection Format) ===\n");
+
+test("wraps injected skills in <omb-learned-skills> tags", () => {
+  resetState();
+  const skillsDir = join(TEMP_DIR, ".oh-my-beads", "skills");
+  mkdirSync(skillsDir, { recursive: true });
+  writeFileSync(join(skillsDir, "format-test.md"), `---
+name: format-test
+description: Test formatting
+triggers:
+  - formatting
+source: project
+tags:
+  - test
+---
+# Problem
+Formatting issue.
+
+# Solution
+Format properly.
+`);
+  const { output } = runScript("skill-injector.mjs", { query: "fix the formatting issue", cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "<omb-learned-skills>", "should have opening tag");
+  assertContains(ctx, "</omb-learned-skills>", "should have closing tag");
+  assertContains(ctx, "### format-test", "should include skill name as heading");
+  assertContains(ctx, "Injected 1 learned skill(s)", "should state injection count");
+  rmSync(skillsDir, { recursive: true, force: true });
+});
+
+// ---- SKILL INJECTOR: MAX CAP ----
+
+console.log("\n=== skill-injector.mjs (Max Cap) ===\n");
+
+test("caps injected skills at MAX_SKILLS=3", () => {
+  resetState();
+  const skillsDir = join(TEMP_DIR, ".oh-my-beads", "skills");
+  mkdirSync(skillsDir, { recursive: true });
+  // Create 5 skills, all matching
+  for (let i = 1; i <= 5; i++) {
+    writeFileSync(join(skillsDir, `skill-${i}.md`), `---
+name: skill-${i}
+description: Skill number ${i}
+triggers:
+  - common-trigger
+source: project
+tags: []
+---
+# Problem
+Problem ${i}.
+
+# Solution
+Solution ${i}.
+`);
+  }
+  const { output } = runScript("skill-injector.mjs", { query: "fix the common-trigger issue", cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "Injected 3 learned skill(s)", "should cap at 3 skills");
+  // Count ### headings to verify only 3 were injected
+  const headingCount = (ctx.match(/### skill-\d/g) || []).length;
+  assert(headingCount === 3, `should have exactly 3 skill headings, got ${headingCount}`);
+  rmSync(skillsDir, { recursive: true, force: true });
+});
+
+// ---- SKILL INJECTOR: QUIET LEVEL ----
+
+console.log("\n=== skill-injector.mjs (Quiet Level) ===\n");
+
+test("OMB_QUIET=2 suppresses skill injection output", () => {
+  resetState();
+  const skillsDir = join(TEMP_DIR, ".oh-my-beads", "skills");
+  mkdirSync(skillsDir, { recursive: true });
+  writeFileSync(join(skillsDir, "quiet-test.md"), `---
+name: quiet-test
+description: Test quiet mode
+triggers:
+  - quietcheck
+source: project
+tags: []
+---
+# Problem
+Quiet check problem.
+
+# Solution
+Quiet check solution.
+`);
+  const { output } = runScript("skill-injector.mjs", { query: "fix the quietcheck issue", cwd: TEMP_DIR }, { OMB_QUIET: "2" });
+  const parsed = parseOutput(output);
+  assert(!parsed?.hookSpecificOutput?.additionalContext, "OMB_QUIET=2 should suppress skill injection");
+  rmSync(skillsDir, { recursive: true, force: true });
+});
+
+// ---- SKILL INJECTOR: SESSION DEDUP ----
+
+console.log("\n=== skill-injector.mjs (Session Dedup) ===\n");
+
+test("session dedup prevents re-injection of already-injected skills", () => {
+  resetState();
+  const skillsDir = join(TEMP_DIR, ".oh-my-beads", "skills");
+  mkdirSync(skillsDir, { recursive: true });
+  writeFileSync(join(skillsDir, "dedup-test.md"), `---
+name: dedup-test
+description: Dedup test skill
+triggers:
+  - dedupcheck
+source: project
+tags: []
+---
+# Problem
+Dedup problem.
+
+# Solution
+Dedup solution.
+`);
+  // First injection should work
+  const { output: out1 } = runScript("skill-injector.mjs", { query: "fix the dedupcheck issue", cwd: TEMP_DIR });
+  const parsed1 = parseOutput(out1);
+  assertContains(parsed1?.hookSpecificOutput?.additionalContext || "", "dedup-test", "first injection should include skill");
+  // Second injection should be suppressed (dedup)
+  const { output: out2 } = runScript("skill-injector.mjs", { query: "fix the dedupcheck issue again", cwd: TEMP_DIR });
+  const parsed2 = parseOutput(out2);
+  assert(!parsed2?.hookSpecificOutput?.additionalContext, "second injection should be suppressed (dedup)");
+  rmSync(skillsDir, { recursive: true, force: true });
+});
+
+// ---- SKILL INJECTOR: EARLY RETURN ----
+
+console.log("\n=== skill-injector.mjs (Early Return) ===\n");
+
+test("early-returns when no skill directories exist", () => {
+  resetState();
+  // Ensure no skills directories exist
+  rmSync(join(TEMP_DIR, ".oh-my-beads", "skills"), { recursive: true, force: true });
+  rmSync(join(OMB_HOME, "skills"), { recursive: true, force: true });
+  const { output } = runScript("skill-injector.mjs", { query: "some prompt", cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should continue");
+  assert(!parsed?.hookSpecificOutput?.additionalContext, "should have no additionalContext when no skills dirs");
+});
+
+// ---- SKILL INJECTOR: PROJECT OVERRIDES GLOBAL ----
+
+console.log("\n=== skill-injector.mjs (Project Overrides Global) ===\n");
+
+test("project skill overrides global skill with same name", () => {
+  resetState();
+  // Create global skill
+  const globalSkillsDir = join(OMB_HOME, "skills");
+  mkdirSync(globalSkillsDir, { recursive: true });
+  writeFileSync(join(globalSkillsDir, "override-test.md"), `---
+name: override-test
+description: Global version
+triggers:
+  - overridecheck
+source: global
+tags: []
+---
+# Problem
+Global problem.
+
+# Solution
+Global solution ONLY.
+`);
+  // Create project skill with same name
+  const projectSkillsDir = join(TEMP_DIR, ".oh-my-beads", "skills");
+  mkdirSync(projectSkillsDir, { recursive: true });
+  writeFileSync(join(projectSkillsDir, "override-test.md"), `---
+name: override-test
+description: Project version
+triggers:
+  - overridecheck
+source: project
+tags: []
+---
+# Problem
+Project problem.
+
+# Solution
+Project solution WINS.
+`);
+  const { output } = runScript("skill-injector.mjs", { query: "fix the overridecheck issue", cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "Project solution WINS", "project skill should override global");
+  assertNotContains(ctx, "Global solution ONLY", "global skill should be overridden");
+  rmSync(globalSkillsDir, { recursive: true, force: true });
+  rmSync(projectSkillsDir, { recursive: true, force: true });
+});
+
 // ============================================================
 // SUMMARY
 // ============================================================

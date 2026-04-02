@@ -9,6 +9,12 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/run.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/keyword-detector.mjs\"",
             "timeout": 5,
             "statusMessage": "Checking for oh-my-beads keywords..."
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/run.cjs\" \"${CLAUDE_PLUGIN_ROOT}/scripts/skill-injector.mjs\"",
+            "timeout": 5,
+            "statusMessage": "Checking for learned skills..."
           }
         ]
       }

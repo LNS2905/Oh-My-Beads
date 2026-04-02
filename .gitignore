@@ -1,8 +1,8 @@
-# Runtime state — transient, never commit
+# Runtime state — now at system-level (~/.oh-my-beads/), these are legacy fallback rules
 .oh-my-beads/state/
 .oh-my-beads/handoffs/
 
-# Keep runtime directories via gitkeep
+# Keep runtime directories via gitkeep (legacy)
 !.oh-my-beads/state/.gitkeep
 !.oh-my-beads/handoffs/.gitkeep
 
@@ -34,7 +34,6 @@ claude-code-main-ref/
 
 # Runtime data (beads-village, mail)
 .beads-village/
-.beads/
 .mail/
 
 # Benchmark reports

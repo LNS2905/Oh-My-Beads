@@ -15,6 +15,16 @@
 
 import { readFileSync, existsSync, readdirSync } from "fs";
 import { join } from "path";
+import { getProjectStateRoot, getArtifactsDir } from "./state-tools/resolve-state-dir.mjs";
+
+// Helper: resolve state file (system-level first, legacy fallback)
+function resolveStateFile(dir, filename) {
+  const systemPath = join(getProjectStateRoot(dir), filename);
+  if (existsSync(systemPath)) return systemPath;
+  const legacyPath = join(dir, ".oh-my-beads", "state", filename);
+  if (existsSync(legacyPath)) return legacyPath;
+  return systemPath; // default
+}
 
 // --- Expected deliverables per role ---
 const EXPECTATIONS = {
@@ -61,7 +71,7 @@ const EXPECTATIONS = {
         // Fast Scout communicates via return value to mr-fast skill.
         // No file output expected — just check that it completed successfully.
         check: (dir, _feature, agentId) => {
-          const trackingFile = join(dir, ".oh-my-beads", "state", "subagent-tracking.json");
+          const trackingFile = resolveStateFile(dir, "subagent-tracking.json");
           const tracking = safeReadJson(trackingFile);
           if (!tracking?.agents) return true; // No tracking = assume OK
           const agent = tracking.agents.find(a => a.id === agentId);
@@ -76,8 +86,9 @@ const EXPECTATIONS = {
       {
         name: "Plan file exists",
         check: (dir) => {
-          return existsSync(join(dir, ".oh-my-beads", "plans", "plan.md"))
-            || existsSync(join(dir, ".oh-my-beads", "plan.md"));
+          const artifacts = getArtifactsDir(dir);
+          return existsSync(join(artifacts, "plans", "plan.md"))
+            || existsSync(join(artifacts, "plan.md"));
         },
       },
     ],
@@ -88,7 +99,7 @@ const EXPECTATIONS = {
       {
         name: "Tool tracking shows file modifications",
         check: (dir) => {
-          const trackingFile = join(dir, ".oh-my-beads", "state", "tool-tracking.json");
+          const trackingFile = resolveStateFile(dir, "tool-tracking.json");
           const tracking = safeReadJson(trackingFile);
           return tracking?.files_modified?.length > 0;
         },
@@ -103,7 +114,7 @@ const EXPECTATIONS = {
         // Reviewer communicates via msg() — we check that subagent
         // tracking shows it completed without errors
         check: (dir, _feature, agentId) => {
-          const trackingFile = join(dir, ".oh-my-beads", "state", "subagent-tracking.json");
+          const trackingFile = resolveStateFile(dir, "subagent-tracking.json");
           const tracking = safeReadJson(trackingFile);
           if (!tracking?.agents) return false;
           const agent = tracking.agents.find(a => a.id === agentId);

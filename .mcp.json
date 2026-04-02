@@ -1,7 +1,8 @@
 {
   "mcpServers": {
     "beads-village": {
-      "command": "beads-village",
+      "command": "npx",
+      "args": ["-y", "beads-village"],
       "env": {
         "BEADS_WORKING_DIR": "${workspaceFolder}"
       }

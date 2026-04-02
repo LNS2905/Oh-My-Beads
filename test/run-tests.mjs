@@ -724,7 +724,7 @@ test("records subagent stop", () => {
     agent_id: "scout-001", role: "scout", exit_code: 0,
   });
   const parsed = parseOutput(output);
-  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "Subagent", "stop message");
+  assertContains(parsed?.additionalContext || "", "Subagent", "stop message");
   const tracking = JSON.parse(readFileSync(join(STATE_DIR, "subagent-tracking.json"), "utf8"));
   const agent = tracking.agents.find(a => a.id === "scout-001");
   assert(agent.status === "stopped", "status should be stopped");
@@ -2092,7 +2092,7 @@ test("consolidated SubagentStop updates tracking on stop", () => {
   });
   const parsed = parseOutput(output);
   assert(parsed?.continue === true, "should continue");
-  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "Subagent", "should have subagent message");
+  assertContains(parsed?.additionalContext || "", "Subagent", "should have subagent message");
   // Verify tracking was updated
   const tracking = JSON.parse(readFileSync(join(STATE_DIR, "subagent-tracking.json"), "utf8"));
   const agent = tracking.agents.find(a => a.id === "worker-001");
@@ -2108,8 +2108,8 @@ test("consolidated SubagentStop verifies scout deliverables", () => {
     agent_id: "scout-001", role: "scout", exit_code: 0,
   });
   const parsed = parseOutput(output);
-  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "WARNINGS", "should warn about missing deliverables");
-  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "CONTEXT.md", "should mention CONTEXT.md");
+  assertContains(parsed?.additionalContext || "", "WARNINGS", "should warn about missing deliverables");
+  assertContains(parsed?.additionalContext || "", "CONTEXT.md", "should mention CONTEXT.md");
 });
 
 test("consolidated SubagentStop passes for unknown role", () => {
@@ -2120,8 +2120,8 @@ test("consolidated SubagentStop passes for unknown role", () => {
   });
   const parsed = parseOutput(output);
   assert(parsed?.continue === true, "should continue");
-  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "completed", "should report completion for unknown role");
-  assertNotContains(parsed?.hookSpecificOutput?.additionalContext || "", "WARNINGS", "should not warn for unknown role");
+  assertContains(parsed?.additionalContext || "", "completed", "should report completion for unknown role");
+  assertNotContains(parsed?.additionalContext || "", "WARNINGS", "should not warn for unknown role");
 });
 
 // ---- OMB_QUIET LEVELS ----
@@ -2632,7 +2632,7 @@ test("SubagentStop handles fast-scout agent correctly", () => {
   });
   const parsed = parseOutput(output);
   assert(parsed?.continue === true, "should continue");
-  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "fast-scout", "should mention fast-scout role");
+  assertContains(parsed?.additionalContext || "", "fast-scout", "should mention fast-scout role");
   // Verify tracking was updated
   const tracking = JSON.parse(readFileSync(join(STATE_DIR, "subagent-tracking.json"), "utf8"));
   const agent = tracking.agents.find(a => a.id === "fast-scout-001");
@@ -2650,7 +2650,7 @@ test("SubagentStop handles executor agent correctly", () => {
   });
   const parsed = parseOutput(output);
   assert(parsed?.continue === true, "should continue");
-  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "executor", "should mention executor role");
+  assertContains(parsed?.additionalContext || "", "executor", "should mention executor role");
   const tracking = JSON.parse(readFileSync(join(STATE_DIR, "subagent-tracking.json"), "utf8"));
   const agent = tracking.agents.find(a => a.id === "executor-001");
   assert(agent.status === "stopped", "executor agent status should be stopped");
@@ -2664,7 +2664,7 @@ test("SubagentStop detects fast-scout role from agent_type", () => {
   });
   const parsed = parseOutput(output);
   assert(parsed?.continue === true, "should continue");
-  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "fast-scout", "should detect fast-scout from agent_type");
+  assertContains(parsed?.additionalContext || "", "fast-scout", "should detect fast-scout from agent_type");
 });
 
 test("SubagentStop detects executor role from agent_type", () => {
@@ -2675,7 +2675,7 @@ test("SubagentStop detects executor role from agent_type", () => {
   });
   const parsed = parseOutput(output);
   assert(parsed?.continue === true, "should continue");
-  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "executor", "should detect executor from agent_type");
+  assertContains(parsed?.additionalContext || "", "executor", "should detect executor from agent_type");
 });
 
 // ---- PHASE RENUMBERING: PERSISTENT-MODE ----
@@ -3069,6 +3069,100 @@ test("session-end handles cancelled phase-at-a-time session gracefully", () => {
   assert(parsed?.continue === true, "session-end should continue for cancelled session");
   const state = readState();
   assert(state.active === false, "cancelled session should remain inactive after session-end");
+});
+
+// ---- HOOK OUTPUT SCHEMA: NO hookSpecificOutput FOR UNSUPPORTED EVENTS ----
+
+console.log("\n=== Hook Output Schema (No hookSpecificOutput for SessionEnd/SubagentStop/Stop) ===\n");
+
+test("session-end.mjs output has no hookSpecificOutput", () => {
+  resetState();
+  writeState({
+    active: true, current_phase: "phase_3_decomposition", mode: "mr.beads",
+    started_at: new Date().toISOString(),
+  });
+  const { output } = runScript("session-end.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should continue");
+  assert(!parsed.hookSpecificOutput, "session-end output should NOT have hookSpecificOutput");
+});
+
+test("session-end.mjs inactive session output has no hookSpecificOutput", () => {
+  resetState();
+  // No active session
+  const { output } = runScript("session-end.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should continue");
+  assert(!parsed.hookSpecificOutput, "session-end inactive output should NOT have hookSpecificOutput");
+});
+
+test("subagent-stop.mjs output has no hookSpecificOutput", () => {
+  resetState();
+  writeFileSync(join(STATE_DIR, "subagent-tracking.json"), JSON.stringify({
+    agents: [{ id: "worker-schema-001", role: "worker", started_at: new Date().toISOString(), status: "running" }],
+  }, null, 2));
+  const { output } = runScript("subagent-stop.mjs", {
+    cwd: TEMP_DIR, hook_event_name: "SubagentStop",
+    agent_id: "worker-schema-001", role: "worker", exit_code: 0,
+  });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should continue");
+  assert(!parsed.hookSpecificOutput, "subagent-stop output should NOT have hookSpecificOutput");
+  assert(typeof parsed.additionalContext === "string", "additionalContext should be at top level");
+});
+
+test("subagent-stop.mjs error-path output has no hookSpecificOutput", () => {
+  resetState();
+  const { output } = runScript("subagent-stop.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should continue on parse error");
+  assert(!parsed.hookSpecificOutput, "subagent-stop error-path output should NOT have hookSpecificOutput");
+});
+
+test("context-guard-stop.mjs output has no hookSpecificOutput", () => {
+  resetState();
+  const { output } = runScript("context-guard-stop.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should continue");
+  assert(!parsed.hookSpecificOutput, "context-guard-stop output should NOT have hookSpecificOutput");
+});
+
+test("persistent-mode.cjs block output has no hookSpecificOutput", () => {
+  resetState();
+  writeState({
+    active: true, current_phase: "phase_5_execution", mode: "mr.beads",
+    started_at: new Date().toISOString(),
+    last_checked_at: new Date().toISOString(),
+    reinforcement_count: 0,
+  });
+  const { output } = runScript("persistent-mode.cjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.decision === "block", "should block");
+  assert(!parsed.hookSpecificOutput, "persistent-mode block output should NOT have hookSpecificOutput");
+});
+
+test("persistent-mode.cjs allow output has no hookSpecificOutput", () => {
+  resetState();
+  // No session => allows stop
+  const { output } = runScript("persistent-mode.cjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should allow stop");
+  assert(!parsed.hookSpecificOutput, "persistent-mode allow output should NOT have hookSpecificOutput");
+});
+
+test("simpleOutput helper produces correct structure", () => {
+  resetState();
+  // Test that session-end with active session has additionalContext=null at top level (not nested)
+  writeState({
+    active: true, current_phase: "phase_7_summary", mode: "mr.beads",
+    started_at: new Date().toISOString(),
+  });
+  const { output } = runScript("session-end.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed?.continue === true, "should continue");
+  assert(!parsed.hookSpecificOutput, "simpleOutput should not produce hookSpecificOutput");
+  // The session-end calls simpleOutput(null) so additionalContext should be absent
+  assert(!parsed.additionalContext, "additionalContext should be absent when null");
 });
 
 // ============================================================

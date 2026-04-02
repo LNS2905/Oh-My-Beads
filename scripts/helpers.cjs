@@ -62,6 +62,24 @@ function hookOutput(hookEventName, additionalContext, systemMessage) {
 }
 
 /**
+ * Produce simple hook output JSON without hookSpecificOutput.
+ *
+ * Use this for hook events whose hookEventName is NOT in Claude Code's
+ * allowed union (e.g., SessionEnd, SubagentStop, Stop).
+ *
+ * @param {string|null} [additionalContext] — Advisory context for Claude (included at top level if provided).
+ * @param {string} [systemMessage] — Optional system message for re-injection.
+ */
+function simpleOutput(additionalContext, systemMessage) {
+  const output = {
+    continue: true,
+    ...(systemMessage ? { systemMessage } : {}),
+    ...(additionalContext ? { additionalContext } : {}),
+  };
+  process.stdout.write(JSON.stringify(output));
+}
+
+/**
  * Get the OMB_QUIET level from env var.
  * Level 0 (default): normal output.
  * Level 1: suppress informational additionalContext (keep warnings/errors).
@@ -72,4 +90,4 @@ function getQuietLevel() {
   return parseInt(process.env.OMB_QUIET || "0", 10) || 0;
 }
 
-module.exports = { readJson, writeJsonAtomic, hookOutput, getQuietLevel };
+module.exports = { readJson, writeJsonAtomic, hookOutput, simpleOutput, getQuietLevel };

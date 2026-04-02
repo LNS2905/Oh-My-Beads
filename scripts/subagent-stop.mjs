@@ -17,7 +17,7 @@
 import { readFileSync, existsSync, readdirSync } from "fs";
 import { join } from "path";
 import { resolveStateDir, getArtifactsDir, getProjectStateRoot } from "./state-tools/resolve-state-dir.mjs";
-import { readJson, writeJsonAtomic, hookOutput } from "./helpers.mjs";
+import { readJson, writeJsonAtomic, simpleOutput } from "./helpers.mjs";
 
 // --- Role deliverables (from subagent-tracker) ---
 const ROLE_DELIVERABLES = {
@@ -205,7 +205,7 @@ process.stdin.on("end", () => {
   try {
     data = JSON.parse(input.trim());
   } catch {
-    hookOutput("SubagentStop", null);
+    simpleOutput(null);
     return;
   }
 
@@ -285,13 +285,13 @@ process.stdin.on("end", () => {
 
   // 4. Report results
   if (warnings.length > 0) {
-    hookOutput("SubagentStop",
+    simpleOutput(
       `[oh-my-beads] Subagent stopped: ${role} (${agentId})\n` +
       `WARNINGS:\n${warnings.map(w => `  - ${w}`).join("\n")}\n` +
       `Verify deliverables before proceeding.`
     );
   } else {
-    hookOutput("SubagentStop",
+    simpleOutput(
       `[oh-my-beads] Subagent completed: ${role} (${agentId}). Deliverables verified.`
     );
   }

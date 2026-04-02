@@ -7,6 +7,7 @@
  *   readJson(path) — Read and parse JSON file, returns null on error/missing.
  *   writeJsonAtomic(filePath, data) — Atomic JSON write (tmp + rename).
  *   hookOutput(hookEventName, additionalContext?, systemMessage?) — Standard hook output.
+ *   simpleOutput(additionalContext?, systemMessage?) — Output without hookSpecificOutput (for SessionEnd, SubagentStop, Stop).
  *
  * All hook scripts import from this module instead of defining inline copies.
  * CJS scripts (persistent-mode.cjs, state-bridge.cjs) use helpers.cjs shim.
@@ -68,6 +69,26 @@ export function hookOutput(hookEventName, additionalContext, systemMessage) {
       hookEventName,
       ...(additionalContext ? { additionalContext } : {}),
     },
+  };
+  process.stdout.write(JSON.stringify(output));
+}
+
+/**
+ * Produce simple hook output JSON without hookSpecificOutput.
+ *
+ * Use this for hook events whose hookEventName is NOT in Claude Code's
+ * allowed union (e.g., SessionEnd, SubagentStop, Stop).  These hooks
+ * must return `{ continue: true }` (or include a systemMessage) but
+ * must NOT include hookSpecificOutput to avoid schema validation errors.
+ *
+ * @param {string|null} [additionalContext] — Advisory context for Claude (included at top level if provided).
+ * @param {string} [systemMessage] — Optional system message for re-injection.
+ */
+export function simpleOutput(additionalContext, systemMessage) {
+  const output = {
+    continue: true,
+    ...(systemMessage ? { systemMessage } : {}),
+    ...(additionalContext ? { additionalContext } : {}),
   };
   process.stdout.write(JSON.stringify(output));
 }

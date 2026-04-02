@@ -17,11 +17,11 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import { join, dirname } from "path";
 import { resolveStateDir } from "./state-tools/resolve-state-dir.mjs";
-import { readJson, writeJsonAtomic, hookOutput as _hookOutput } from "./helpers.mjs";
+import { readJson, writeJsonAtomic, simpleOutput } from "./helpers.mjs";
 
 // --- Helpers ---
 const hookOutput = (additionalContext) => {
-  _hookOutput("SessionEnd", additionalContext);
+  simpleOutput(additionalContext);
 };
 
 // --- Main ---

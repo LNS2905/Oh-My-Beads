@@ -3266,6 +3266,28 @@ test("ignores informational query about doctor omb", () => {
   assert(!ctx || !ctx.includes("MAGIC KEYWORD"), "should not trigger on informational doctor query");
 });
 
+// ---- LEARNER KEYWORD ROUTING ----
+
+console.log("\n=== keyword-detector.mjs (Learner Routing) ===\n");
+
+test("'learn this' routes to learner skill", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "learn this" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "MAGIC KEYWORD: learn-omb", "should trigger learn keyword");
+  assertContains(ctx, "oh-my-beads:learner", "should route to learner skill");
+});
+
+test("'remember this pattern' routes to learner skill", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "remember this pattern" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "MAGIC KEYWORD: learn-omb", "should trigger learn keyword");
+  assertContains(ctx, "oh-my-beads:learner", "should route to learner skill");
+});
+
 // ---- PROJECT MEMORY: detectProjectEnv ----
 
 console.log("\n=== project-memory.mjs (detectProjectEnv) ===\n");

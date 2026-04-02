@@ -209,7 +209,21 @@ local development path).
 **If `statusLine` exists BUT command points to a different (non-OMB) script:** CHECK statusline ... SKIP (non-OMB statusline configured — will not overwrite)
 **If `statusLine` is missing or `~/.claude/settings.json` does not exist:** CHECK statusline ... MISSING (will auto-configure in Phase B)
 
-### A12. Report Summary
+### A12. Check Global CLAUDE.md OMB Section
+
+```
+Read ~/.claude/CLAUDE.md
+```
+
+Look for `<!-- OMB:START -->` and `<!-- OMB:END -->` markers.
+Also check for `<!-- OMC:START -->` markers (conflicting plugin instructions).
+
+**If OMB markers exist with current version (`<!-- OMB:VERSION:X.Y.Z -->` matches plugin version):** CHECK Global CLAUDE.md ... PASS (OMB block up to date)
+**If OMB markers exist with older version:** CHECK Global CLAUDE.md ... UPDATE (OMB block outdated, will update in Phase B)
+**If no OMB markers / file does not exist:** CHECK Global CLAUDE.md ... MISSING (will inject in Phase B)
+**If `<!-- OMC:START -->` markers found:** CHECK Global CLAUDE.md ... WARNING (OMC block detected — conflicting plugin instructions, will be replaced in Phase B)
+
+### A13. Report Summary
 
 Present all results:
 
@@ -229,8 +243,9 @@ Present all results:
 | A9 | CLAUDE.md OMB section  | MISSING |                               |
 | A10| Version consistency    | PASS    | v1.2.0                        |
 | A11| Statusline             | MISSING | Not configured in settings    |
+| A12| Global CLAUDE.md       | MISSING | OMB block not found           |
 
-Items to configure: 5
+Items to configure: 6
 ```
 
 **If all PASS:** "Oh-My-Beads is fully configured. No changes needed." → STOP.
@@ -369,6 +384,30 @@ Add the `statusLine` entry:
 
 Report: FIXED statusline ... HUD configured in ~/.claude/settings.json
 
+### B6. Configure Global CLAUDE.md
+
+**Only if A12 was MISSING, UPDATE, or WARNING.**
+
+Read the OMB block content from `skills/setup/references/global-claude-md.md`.
+
+Read `~/.claude/CLAUDE.md` (if it exists).
+
+**If `<!-- OMC:START -->` and `<!-- OMC:END -->` markers found:** Remove the entire OMC block
+(everything between `<!-- OMC:START -->` and `<!-- OMC:END -->` inclusive) before proceeding.
+Report: REMOVED OMC block from ~/.claude/CLAUDE.md (conflicting plugin)
+
+**If `<!-- OMB:START -->` and `<!-- OMB:END -->` markers already exist:** Replace the content
+between markers (inclusive) with the OMB block from the reference file.
+
+**If no `<!-- OMB:START -->` markers exist but file exists:** Prepend the OMB block at the top
+of the file (before any existing content), followed by a blank line to separate from user content.
+
+**If `~/.claude/CLAUDE.md` does not exist:** Create the file with the OMB block content.
+
+Preserve all other content in the file (user customizations, other plugin blocks).
+
+Report: FIXED Global CLAUDE.md ... OMB block injected/updated
+
 ---
 
 ## Phase C: Configure + Finalize
@@ -456,6 +495,7 @@ this file first and offers a quick-update path instead of the full wizard.
 | Artifact dirs          | PASS   |
 | Statusline             | FIXED  |
 | CLAUDE.md              | FIXED  |
+| Global CLAUDE.md       | FIXED  |
 
 Oh-My-Beads v{version} is ready!
 

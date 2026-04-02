@@ -3165,6 +3165,107 @@ test("simpleOutput helper produces correct structure", () => {
   assert(!parsed.additionalContext, "additionalContext should be absent when null");
 });
 
+// ---- SETUP & DOCTOR KEYWORD ROUTING ----
+
+console.log("\n=== keyword-detector.mjs (Setup & Doctor Routing) ===\n");
+
+test("'setup omb' routes to setup skill (not Mr.Beads)", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "setup omb" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "MAGIC KEYWORD: setup-omb", "should trigger setup keyword");
+  assertContains(ctx, "oh-my-beads:setup", "should route to setup skill");
+  assertNotContains(ctx, "oh-my-beads:using-oh-my-beads", "should NOT route to Mr.Beads bootstrap");
+  assertNotContains(ctx, "MAGIC KEYWORD: oh-my-beads", "should NOT trigger Mr.Beads keyword");
+});
+
+test("'omb setup' routes to setup skill (not Mr.Beads)", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "omb setup" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "MAGIC KEYWORD: setup-omb", "should trigger setup keyword");
+  assertContains(ctx, "oh-my-beads:setup", "should route to setup skill");
+  assertNotContains(ctx, "MAGIC KEYWORD: oh-my-beads", "should NOT trigger Mr.Beads keyword");
+});
+
+test("'setup oh-my-beads' routes to setup skill", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "setup oh-my-beads" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "MAGIC KEYWORD: setup-omb", "should trigger setup keyword");
+  assertContains(ctx, "oh-my-beads:setup", "should route to setup skill");
+});
+
+test("'doctor omb' routes to doctor skill", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "doctor omb" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "MAGIC KEYWORD: doctor-omb", "should trigger doctor keyword");
+  assertContains(ctx, "oh-my-beads:doctor", "should route to doctor skill");
+  assertNotContains(ctx, "MAGIC KEYWORD: oh-my-beads", "should NOT trigger Mr.Beads keyword");
+});
+
+test("'omb doctor' routes to doctor skill", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "omb doctor" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "MAGIC KEYWORD: doctor-omb", "should trigger doctor keyword");
+  assertContains(ctx, "oh-my-beads:doctor", "should route to doctor skill");
+});
+
+test("'doctor oh-my-beads' routes to doctor skill", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "doctor oh-my-beads" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "MAGIC KEYWORD: doctor-omb", "should trigger doctor keyword");
+  assertContains(ctx, "oh-my-beads:doctor", "should route to doctor skill");
+});
+
+test("'omb build me X' still routes to Mr.Beads (no regression)", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "omb build me a REST API" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "MAGIC KEYWORD: oh-my-beads", "should trigger Mr.Beads keyword");
+  assertContains(ctx, "oh-my-beads:using-oh-my-beads", "should route to Mr.Beads bootstrap skill");
+  assertNotContains(ctx, "setup-omb", "should NOT trigger setup");
+  assertNotContains(ctx, "doctor-omb", "should NOT trigger doctor");
+});
+
+test("setup does not write session state", () => {
+  resetState();
+  runScript("keyword-detector.mjs", { query: "setup omb" });
+  const state = readState();
+  assert(!state || !state.active, "setup should not activate a session");
+});
+
+test("doctor does not write session state", () => {
+  resetState();
+  runScript("keyword-detector.mjs", { query: "doctor omb" });
+  const state = readState();
+  assert(!state || !state.active, "doctor should not activate a session");
+});
+
+test("ignores informational query about setup omb", () => {
+  const { output } = runScript("keyword-detector.mjs", { query: "what does setup omb do?" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext;
+  assert(!ctx || !ctx.includes("MAGIC KEYWORD"), "should not trigger on informational setup query");
+});
+
+test("ignores informational query about doctor omb", () => {
+  const { output } = runScript("keyword-detector.mjs", { query: "what is doctor omb?" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext;
+  assert(!ctx || !ctx.includes("MAGIC KEYWORD"), "should not trigger on informational doctor query");
+});
+
 // ============================================================
 // SUMMARY
 // ============================================================

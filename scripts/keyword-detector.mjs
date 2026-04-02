@@ -23,6 +23,10 @@ const KEYWORDS = [
   { pattern: /\b(?:cancel\s*omb|stop\s*omb|cancel\s*oh-my-beads)\b/i, action: "cancel" },
   // Update pattern (before invoke patterns to avoid omb catching it)
   { pattern: /\b(?:update\s*omb|omb\s*update|update\s*oh-my-beads|upgrade\s*omb|omb\s*upgrade)\b/i, action: "update" },
+  // Setup pattern (before invoke patterns to avoid omb catching it)
+  { pattern: /\b(?:setup\s+omb|omb\s+setup|setup\s+oh-my-beads)\b/i, action: "setup" },
+  // Doctor pattern (before invoke patterns to avoid omb catching it)
+  { pattern: /\b(?:doctor\s+omb|omb\s+doctor|doctor\s+oh-my-beads)\b/i, action: "doctor" },
   // Invoke patterns (mr.fast before omb to avoid omb catching everything)
   { pattern: /\b(?:mr\.?\s*fast|mrfast)\b/i, action: "invoke-fast" },
   { pattern: /\b(?:mr\.?\s*beads|mrbeads)\b/i, action: "invoke" },
@@ -205,6 +209,8 @@ process.stdin.on("end", () => {
     if (kw.action === "invoke" && (isInformational(clean, "omb") || isInformational(clean, "oh-my-beads") || isInformational(clean, "mr.beads") || isInformational(clean, "mrbeads"))) continue;
     if (kw.action === "invoke-fast" && (isInformational(clean, "mr.fast") || isInformational(clean, "mrfast"))) continue;
     if (kw.action === "update" && (isInformational(clean, "update omb") || isInformational(clean, "omb update"))) continue;
+    if (kw.action === "setup" && (isInformational(clean, "setup omb") || isInformational(clean, "omb setup"))) continue;
+    if (kw.action === "doctor" && (isInformational(clean, "doctor omb") || isInformational(clean, "omb doctor"))) continue;
 
     if (kw.action === "cancel") {
       clearSessionState();
@@ -215,6 +221,20 @@ process.stdin.on("end", () => {
     if (kw.action === "update") {
       hookOutput(
         `[MAGIC KEYWORD: update-omb]\n\nYou MUST invoke the skill using the Skill tool:\n\nSkill: oh-my-beads:update-plugin\n\nUser request:\n${raw}\n\nIMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`
+      );
+      return;
+    }
+
+    if (kw.action === "setup") {
+      hookOutput(
+        `[MAGIC KEYWORD: setup-omb]\n\nYou MUST invoke the skill using the Skill tool:\n\nSkill: oh-my-beads:setup\n\nUser request:\n${raw}\n\nIMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`
+      );
+      return;
+    }
+
+    if (kw.action === "doctor") {
+      hookOutput(
+        `[MAGIC KEYWORD: doctor-omb]\n\nYou MUST invoke the skill using the Skill tool:\n\nSkill: oh-my-beads:doctor\n\nUser request:\n${raw}\n\nIMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`
       );
       return;
     }

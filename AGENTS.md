@@ -21,14 +21,14 @@ Master classifies intent first:
 - **Complex** → full 7-phase flow
 
 ```
-User prompt → keyword-detector → prompt-leverage (augment) → Mr.Beads bootstrap
-Phase 0: Load learnings → Scout (Phase 1) → Gate 1
+User prompt → keyword-detector → skill-injector → prompt-leverage (augment) → Master skill
+Phase 0: Load learnings + project memory → Scout (Phase 1) → Gate 1
 → Architect planning + persistence (Phase 2) → Gate 2
 → Architect decomposition for current phase (Phase 3)
 → Validation (Phase 4) → Gate 3
 → Workers (Phase 5) → Per-bead review + Full review (Phase 6/6.5)
 → [loop back to Phase 3 if not final phase]
-→ Summary + Compounding (Phase 7)
+→ Summary + Compounding + Skill Promotion (Phase 7)
 ```
 
 ### Mr.Fast Flow (tiered)
@@ -39,7 +39,7 @@ Keyword-detector classifies intent:
 - **Complex** (too large) → suggest Mr.Beads instead, no active session created
 
 ```
-User prompt → keyword-detector → intent classification → prompt-leverage (augment, Light intensity)
+User prompt → keyword-detector → skill-injector → intent classification → prompt-leverage (augment, Light intensity)
 
 Turbo:   → Executor (read → edit → verify → report)
 Standard: → Fast Scout (0-2 questions) → Executor (reserve → implement → self-verify → release)
@@ -76,6 +76,16 @@ mr.fast fix the login validation bug
 # Cancel either mode
 cancel omb
 cancel mrfast
+
+# Learn from current session (Learner skill)
+learn this
+
+# Fetch external docs (External Context skill)
+fetch docs for Stripe API
+
+# Setup / diagnose workspace
+setup omb
+doctor omb
 ```
 
 ## The 7-Phase Workflow
@@ -93,7 +103,7 @@ The Master Orchestrator classifies intent first, then enforces phase ordering st
 ### Full Flow (Complex)
 
 ```
-Phase 0: Load Institutional Memory        [Master: read critical-patterns.md + domain learnings]
+Phase 0: Load Institutional Memory        [Master: read critical-patterns.md + domain learnings + project memory]
    ↓
 Phase 1: Requirements & Clarification     [Scout]
    ↓
@@ -117,7 +127,7 @@ Phase 6.5: Feature-Level Full Review       [Reviewer: full-review mode, 3 specia
    ↓
  [Loop back to Phase 3 if not final phase]
    ↓
-Phase 7: Final Summary & Compounding       [Master + Compounding skill]
+Phase 7: Final Summary & Compounding       [Master + Compounding skill + Skill Promotion]
 ```
 
 ---
@@ -133,6 +143,7 @@ Before entering any phase, the Master builds LEARNINGS_CONTEXT from accumulated 
 - Reads `.oh-my-beads/history/learnings/critical-patterns.md`
 - Greps `learnings/` for domain keywords from the user request
 - Builds LEARNINGS_CONTEXT string injected into Scout and Architect prompts
+- Project Memory summary (tech stack, hot paths, directives) is automatically injected by session-start hook
 
 ### Phase 1: Requirements & Clarification
 *(Complex path only — skipped for simple path)*
@@ -319,11 +330,13 @@ After Phase 6/6.5 completes:
    - Produces `.oh-my-beads/history/learnings/YYYYMMDD-<slug>.md` with domain tags
    - Promotes critical findings to `.oh-my-beads/history/learnings/critical-patterns.md`
    - **Pruning:** When critical-patterns.md exceeds 50 entries, archives oldest 20 to `critical-patterns-archive.md`
+   - **Skill Promotion:** Qualifying learnings (P1/Critical severity or actionable patterns) are promoted to `.oh-my-beads/skills/{slug}.md` after passing 3 HARD-GATE quality gates: Reusable, Actionable, Triggerable. Source field uses `source: compounding` to distinguish from manually created skills.
 4. Clear session state
 
 The compounding flywheel ensures each completed feature makes the next one faster:
 - **Scout** reads critical-patterns.md at Phase 1 → asks sharper questions
 - **Architect** reads critical-patterns.md at Phase 2 → avoids known pitfalls
+- **Skill Injector** auto-discovers promoted skill files → injects matching knowledge into future prompts
 
 ---
 
@@ -412,8 +425,10 @@ Agent definitions live in `agents/*.md`. Each file defines the agent's role, mod
 |-------|-----------|-------|-------------------|-------|
 | **Validating** | `skills/validating/SKILL.md` | Phase 4 | ls, show, bv_insights, bv_priority, bv_plan, graph, add, done | sonnet (subagents) |
 | **Swarming** | `skills/swarming/SKILL.md` | Phase 5 (parallel) | ls, show, done, reservations, msg, inbox, ack_message, bv_insights | sonnet (Workers) |
-| **Compounding** | `skills/compounding/SKILL.md` | Phase 7 | (none — reads/writes learnings files) | sonnet (subagents) |
+| **Compounding** | `skills/compounding/SKILL.md` | Phase 7 | (none — reads/writes learnings + skill files) | sonnet (subagents) |
 | **Debugging** | `skills/debugging/SKILL.md` | Error recovery | show, add, msg, inbox, bv_insights, reservations | sonnet |
+| **Learner** | `skills/learner/SKILL.md` | On-demand | (none — reads conversation, writes skill files) | sonnet |
+| **External Context** | `skills/external-context/SKILL.md` | On-demand | (none — uses WebSearch/WebFetch, writes context files) | sonnet (subagents) |
 
 ## Context Isolation
 
@@ -546,19 +561,23 @@ OhMyBeads/                              # Plugin root (git repo)
 │   ├── run.cjs                         # Hook wrapper (spawns .mjs scripts)
 │   ├── helpers.mjs                     # Shared helpers (readJson, writeJsonAtomic, hookOutput)
 │   ├── helpers.cjs                     # CJS shim of shared helpers (for persistent-mode)
-│   ├── keyword-detector.mjs            # UserPromptSubmit: "omb"/"mr.fast" detection + intent classification
-│   ├── session-start.mjs              # SessionStart: bootstrap + resume (both modes)
+│   ├── config.mjs                      # User config loader (model overrides from ~/.oh-my-beads/config.json)
+│   ├── project-memory.mjs             # Project Memory: auto-detect tech stack, hot paths, directives, notes
+│   ├── skill-injector.mjs             # UserPromptSubmit: auto-discover and inject learned skills
+│   ├── keyword-detector.mjs            # UserPromptSubmit: keyword detection + intent classification + directive detection
+│   ├── session-start.mjs              # SessionStart: bootstrap + resume + project memory + priority context
 │   ├── pre-tool-enforcer.mjs          # PreToolUse: role-based access control (early-returns for inactive sessions)
-│   ├── post-tool-verifier.mjs         # PostToolUse: failure detection & tracking (early-returns for inactive sessions)
+│   ├── post-tool-verifier.mjs         # PostToolUse: failure detection, tracking, hot paths, <remember> tags
 │   ├── post-tool-use-failure.mjs      # PostToolUseFailure: retry tracking & escalation
 │   ├── context-guard-stop.mjs         # Stop: context pressure detection (runs before persistent-mode)
 │   ├── persistent-mode.cjs            # Stop: autonomy engine (blocks premature stops)
+│   ├── pre-compact.mjs                # PreCompact: checkpoint + handoff + project memory summary
 │   ├── session-end.mjs                # SessionEnd: cleanup state, deactivate sessions
 │   ├── prompt-leverage.mjs            # Prompt augmentation (imported by keyword-detector)
 │   ├── subagent-tracker.mjs           # SubagentStart: subagent lifecycle tracking
 │   └── subagent-stop.mjs             # SubagentStop: consolidated deliverable verification + tracking
 ├── skills/                             # All skills at plugin root
-│   ├── using-oh-my-beads/SKILL.md      # Bootstrap & entry point
+│   ├── using-oh-my-beads/SKILL.md      # Bootstrap & entry point (manual invocation)
 │   ├── mr-fast/SKILL.md                # Mr.Fast entry point (turbo/standard/complex paths)
 │   ├── master/SKILL.md                 # Master Orchestrator (7-phase, intent classification, phase-at-a-time)
 │   ├── scout/                          # Phase 1: Socratic exploration
@@ -586,38 +605,168 @@ OhMyBeads/                              # Plugin root (git repo)
 │   │   └── references/
 │   │       ├── worker-spawn-template.md # Self-routing Worker spawn template (region hints)
 │   │       └── message-templates.md    # beads_village messaging formats (thread parameter)
-│   ├── compounding/                    # Phase 7: Learning flywheel (pruning, domain tags)
-│   │   ├── SKILL.md                    # HARD-GATE, pruning at >50 entries, archive oldest 20
+│   ├── compounding/                    # Phase 7: Learning flywheel (pruning, domain tags, skill promotion)
+│   │   ├── SKILL.md                    # HARD-GATE, pruning at >50 entries, archive oldest 20, skill promotion
 │   │   └── references/
 │   │       ├── learnings-template.md   # YAML template with domain tags
 │   │       └── learnings-retrieval-protocol.md # 5-step protocol for consuming learnings
+│   ├── learner/                        # On-demand: Extract reusable knowledge from sessions
+│   │   ├── SKILL.md                    # 3 quality gates, project/global skill file output
+│   │   └── references/
+│   │       └── skill-template.md       # Learned skill file template
+│   ├── external-context/SKILL.md       # On-demand: Parallel web search for SDK/API docs
 │   ├── debugging/SKILL.md              # Systematic debugging (triage → reproduce → diagnose → fix → learn)
 │   ├── prompt-leverage/                # Automatic prompt enhancement
 │   │   ├── SKILL.md
 │   │   └── references/
 │   │       └── framework.md            # Framework block definitions
+│   ├── setup/SKILL.md                 # Workspace setup and configuration
+│   ├── statusline/SKILL.md            # Status bar configuration
+│   ├── update-plugin/SKILL.md         # Plugin update management
 │   ├── cancel/SKILL.md               # Cancel active session
 │   └── doctor/SKILL.md               # Diagnose workspace health
 ├── test/
-│   └── run-tests.mjs                  # Hook simulation test harness
-├── .oh-my-beads/                       # Runtime workspace (per-project)
-│   ├── state/
-│   │   ├── session.json                # Current phase, progress, reinforcement count
-│   │   ├── tool-tracking.json          # Files modified, failures detected
-│   │   └── subagent-tracking.json      # Spawned subagent lifecycle
+│   └── run-tests.mjs                  # Hook simulation test harness (331 tests)
+├── .oh-my-beads/                       # Project workspace (committed to repo)
 │   ├── priority-context.md             # Critical context loaded every session (max 500 chars)
 │   ├── plans/plan.md                   # Approved implementation plan
-│   ├── handoffs/phase_<N>.md           # Phase transition context
+│   ├── plans/worker-{bead-id}.md       # Worker assignment files (compaction recovery)
+│   ├── skills/                         # Learned skill files (auto-discovered by skill-injector)
+│   │   └── {slug}.md                   # Individual learned skills with YAML frontmatter
+│   ├── context/                        # External documentation cache
+│   │   └── {topic}.md                  # Fetched SDK/API docs (from external-context skill)
 │   └── history/
 │       ├── <feature>/CONTEXT.md        # Locked decisions
 │       ├── <feature>/WRAP-UP.md        # Session summary
 │       ├── working-memory.md           # Accumulated working memory (<remember> tags)
 │       └── learnings/                  # Compounding flywheel
 │           ├── critical-patterns.md    # Promoted critical learnings (read at session start)
+│           ├── critical-patterns-archive.md # Archived patterns (when >50 entries, oldest 20 moved here)
 │           └── YYYYMMDD-<slug>.md      # Per-feature structured learnings
 ├── AGENTS.md                           # This file
 └── .gitignore
 ```
+
+### System-Level State (not committed)
+
+```
+~/.oh-my-beads/                          # System root (or $OMB_HOME)
+├── config.json                          # User config: model overrides per agent role
+├── skills/                              # Global learned skills (cross-project)
+│   └── {slug}.md                        # User-level skill files
+└── projects/{hash}/                     # Per-project runtime state
+    ├── session.json                     # Current phase, progress, reinforcement count
+    ├── tool-tracking.json               # Files modified, failures detected
+    ├── subagent-tracking.json           # Spawned subagent lifecycle
+    ├── checkpoint.json                  # Pre-compaction checkpoint
+    ├── last-tool-error.json             # Last tool failure, retry count
+    ├── cancel-signal.json               # Cancel signal with 30s TTL
+    ├── project-memory.json              # Auto-detected tech stack, hot paths, directives, notes
+    ├── injected-skills.json             # Session dedup: which skills already injected
+    └── handoffs/                        # Phase transition context
+        └── phase_<N>.md
+```
+
+## Power Features
+
+### Project Memory
+
+Cross-session knowledge persistence that auto-detects project environment and learns over time.
+
+| Component | Description |
+|-----------|-------------|
+| **Auto-detection** | `scripts/project-memory.mjs` scans package.json, tsconfig.json, go.mod, Cargo.toml, pyproject.toml etc. to detect languages, frameworks, package manager, runtime, and build/test/lint/dev commands |
+| **Hot Paths** | `post-tool-verifier.mjs` tracks file access frequency (Read/Edit/Write/MultiEdit tools). Bounded to 50 entries. Top 3 shown in summary |
+| **User Directives** | `keyword-detector.mjs` detects patterns like "always use X", "never modify Y", "prefer Z over W" and adds to project memory |
+| **Custom Notes** | Timestamped notes (max 20) with categories |
+| **Session Injection** | `session-start.mjs` formats a 650-char tiered summary ([Environment], [Hot Paths], [Directives], [Notes]) and injects into every session's additionalContext |
+| **Compaction Survival** | `pre-compact.mjs` includes project memory summary in systemMessage |
+| **Auto-rescan** | If lastScanned > 24 hours, tech stack is rescanned while preserving user data |
+
+Stored at: `~/.oh-my-beads/projects/{hash}/project-memory.json`
+
+### Priority Context Notepad
+
+Agents persist critical knowledge using `<remember>` tags in their output:
+
+| Tag | Behavior | Storage |
+|-----|----------|---------|
+| `<remember priority>` | Replaces entire file (max 500 chars) | `.oh-my-beads/priority-context.md` |
+| `<remember>` | Appends with timestamp | `.oh-my-beads/history/working-memory.md` |
+
+Priority context is loaded every session start and survives compaction. Processing happens in `post-tool-verifier.mjs`.
+
+### Skill Injector
+
+Auto-discovers learned skill files and injects relevant ones into prompts.
+
+| Feature | Detail |
+|---------|--------|
+| **Discovery** | Scans `{cwd}/.oh-my-beads/skills/` (project, high priority) and `~/.oh-my-beads/skills/` (global) |
+| **Matching** | Case-insensitive substring match of trigger keywords against user prompt |
+| **Scoring** | +10 per trigger match, sorted descending |
+| **Cap** | Max 3 skills per prompt |
+| **Session Dedup** | Tracks injected skills in `injected-skills.json` to prevent re-injection |
+| **Override** | Project skills override global skills with the same name |
+| **Quiet** | OMB_QUIET=2 suppresses injection output |
+
+Hook: `skill-injector.mjs` (UserPromptSubmit, runs after keyword-detector)
+
+### Learner Skill
+
+Extracts reusable, codebase-specific knowledge from the current session into learned skill files.
+
+- Triggered by: "learn this", "save this", "remember this pattern", or `/oh-my-beads:learner`
+- **3 HARD-GATE quality gates**: Not Googleable, Codebase-Specific, Real Effort
+- Writes skill files to `{cwd}/.oh-my-beads/skills/{slug}.md` (project) or `~/.oh-my-beads/skills/{slug}.md` (global)
+- Skill files follow YAML frontmatter format with `name`, `description`, `triggers[]`, `source: learned`, `tags[]`
+- Auto-discovered by skill-injector on future prompts
+
+### Compounding Skill Promotion
+
+The compounding skill (Phase 7) can auto-promote qualifying learnings into skill files.
+
+- **Promotion candidates**: P1/Critical severity findings, or patterns with specific error messages + file paths + actionable fixes
+- **3 HARD-GATE quality gates**: Reusable, Actionable, Triggerable (same rigor as Learner)
+- Promoted skill files use `source: compounding` to distinguish from manually created ones
+- Creates files in `{cwd}/.oh-my-beads/skills/{slug}.md`
+
+### Configurable Agent Models
+
+Users can override which model each agent role uses via `~/.oh-my-beads/config.json`:
+
+```json
+{
+  "models": {
+    "master": "opus",
+    "scout": "opus",
+    "fast-scout": "sonnet",
+    "architect": "opus",
+    "worker": "sonnet",
+    "reviewer": "sonnet",
+    "explorer": "haiku",
+    "executor": "sonnet"
+  }
+}
+```
+
+- Module: `scripts/config.mjs` — exports `loadConfig()`, `getModelForRole(role)`, `DEFAULT_MODELS`
+- Values can be model aliases (opus, sonnet, haiku) or full model names
+- Missing config returns defaults; invalid JSON returns defaults
+- Each agent .md file documents that its model can be overridden via config
+
+### External Context Skill
+
+Fetches SDK/API documentation via parallel web searches.
+
+- Triggered by: "fetch docs for X", "find docs for X", or `/oh-my-beads:external-context`
+- Decomposes query into 2–5 search facets
+- Spawns parallel document-specialist subagents (each with WebSearch + WebFetch)
+- Synthesizes results into a structured document with citations
+- Saves output to `.oh-my-beads/context/{topic}.md`
+- **HARD-GATE**: Never fabricate documentation — every fact must have a citation URL
+
+---
 
 ## Prerequisites
 

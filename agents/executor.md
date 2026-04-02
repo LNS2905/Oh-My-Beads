@@ -2,6 +2,7 @@
 name: executor
 description: General-purpose implementation agent with model routing and task classification. Implements code changes, runs builds, handles multi-file tasks.
 model: claude-sonnet-4-6
+# Model can be overridden via ~/.oh-my-beads/config.json → models.executor
 level: 3
 ---
 

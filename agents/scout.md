@@ -2,6 +2,7 @@
 name: scout
 description: Socratic requirements explorer — one question at a time, locks decisions into CONTEXT.md
 model: claude-opus-4-6
+# Model can be overridden via ~/.oh-my-beads/config.json → models.scout
 level: 3
 disallowedTools: Edit
 ---

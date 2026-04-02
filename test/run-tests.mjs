@@ -4341,6 +4341,59 @@ Project solution WINS.
   rmSync(projectSkillsDir, { recursive: true, force: true });
 });
 
+// ---- CONFIG MODULE ----
+
+console.log("\n=== config.mjs ===\n");
+
+// Set OMB_HOME for direct imports (runScript sets it via env, but direct import needs process.env)
+process.env.OMB_HOME = OMB_HOME;
+const { loadConfig, getModelForRole, DEFAULT_MODELS } = await import(join(SCRIPTS_DIR, "config.mjs"));
+
+test("loadConfig returns defaults when config.json is missing", () => {
+  // Ensure no config.json exists at OMB_HOME
+  rmSync(join(OMB_HOME, "config.json"), { force: true });
+  const config = loadConfig();
+  assert(config, "config should not be null");
+  assert(config.models, "config should have models");
+  assert(config.models.master === "opus", `master should default to opus, got ${config.models.master}`);
+  assert(config.models.worker === "sonnet", `worker should default to sonnet, got ${config.models.worker}`);
+  assert(config.models.explorer === "haiku", `explorer should default to haiku, got ${config.models.explorer}`);
+  assert(config.models["fast-scout"] === "sonnet", `fast-scout should default to sonnet`);
+});
+
+test("loadConfig merges user overrides over defaults", () => {
+  // Write a config.json with partial overrides
+  writeFileSync(
+    join(OMB_HOME, "config.json"),
+    JSON.stringify({ models: { master: "sonnet", worker: "claude-opus-4-6" } })
+  );
+  const config = loadConfig();
+  assert(config.models.master === "sonnet", `master should be overridden to sonnet, got ${config.models.master}`);
+  assert(config.models.worker === "claude-opus-4-6", `worker should be overridden, got ${config.models.worker}`);
+  // Non-overridden roles keep defaults
+  assert(config.models.scout === "opus", `scout should keep default opus, got ${config.models.scout}`);
+  assert(config.models.explorer === "haiku", `explorer should keep default haiku, got ${config.models.explorer}`);
+  rmSync(join(OMB_HOME, "config.json"), { force: true });
+});
+
+test("getModelForRole returns configured model for overridden role", () => {
+  writeFileSync(
+    join(OMB_HOME, "config.json"),
+    JSON.stringify({ models: { reviewer: "opus" } })
+  );
+  const model = getModelForRole("reviewer");
+  assert(model === "opus", `reviewer should be opus, got ${model}`);
+  rmSync(join(OMB_HOME, "config.json"), { force: true });
+});
+
+test("getModelForRole returns default for non-overridden role", () => {
+  rmSync(join(OMB_HOME, "config.json"), { force: true });
+  const model = getModelForRole("architect");
+  assert(model === "opus", `architect should default to opus, got ${model}`);
+  const workerModel = getModelForRole("worker");
+  assert(workerModel === "sonnet", `worker should default to sonnet, got ${workerModel}`);
+});
+
 // ============================================================
 // SUMMARY
 // ============================================================

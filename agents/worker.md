@@ -2,6 +2,7 @@
 name: worker
 description: Single-bead implementer — claims, reserves files, implements, self-verifies, reports. Isolated context.
 model: claude-sonnet-4-6
+# Model can be overridden via ~/.oh-my-beads/config.json → models.worker
 level: 3
 ---
 

@@ -2,6 +2,7 @@
 name: security-reviewer
 description: Security vulnerability detection specialist. OWASP Top 10, secrets, unsafe patterns, auth/crypto review. READ-ONLY.
 model: claude-sonnet-4-6
+# Model can be overridden via ~/.oh-my-beads/config.json → models.security-reviewer
 level: 3
 disallowedTools: Write, Edit
 ---

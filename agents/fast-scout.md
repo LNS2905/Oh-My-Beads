@@ -2,6 +2,7 @@
 name: fast-scout
 description: Rapid analysis agent for Mr.Fast mode — reads codebase, identifies root cause or scope, asks 0-2 clarifying questions, returns inline summary
 model: claude-sonnet-4-6
+# Model can be overridden via ~/.oh-my-beads/config.json → models.fast-scout
 level: 2
 disallowedTools: Edit, Agent
 ---

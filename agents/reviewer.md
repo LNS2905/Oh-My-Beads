@@ -2,6 +2,7 @@
 name: reviewer
 description: Dual-mode quality agent — validates bead descriptions (Phase 5) and reviews implementations (Phase 7). READ-ONLY.
 model: claude-sonnet-4-6
+# Model can be overridden via ~/.oh-my-beads/config.json → models.reviewer
 level: 3
 disallowedTools: Write, Edit
 ---

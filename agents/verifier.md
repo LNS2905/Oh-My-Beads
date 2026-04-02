@@ -2,6 +2,7 @@
 name: verifier
 description: Independent verification agent. Checks that implementations match specifications with evidence-based assertions. READ-ONLY.
 model: claude-sonnet-4-6
+# Model can be overridden via ~/.oh-my-beads/config.json → models.verifier
 level: 3
 disallowedTools: Write, Edit
 ---

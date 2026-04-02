@@ -2,6 +2,7 @@
 name: test-engineer
 description: Test strategy and implementation specialist. Writes tests, hardens flaky tests, designs test infrastructure. TDD-capable.
 model: claude-sonnet-4-6
+# Model can be overridden via ~/.oh-my-beads/config.json → models.test-engineer
 level: 3
 ---
 

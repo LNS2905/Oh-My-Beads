@@ -2,6 +2,7 @@
 name: master
 description: Master Orchestrator — 8-step workflow controller, spawns sub-agents, enforces HITL gates, coordinates via beads_village. Never writes code.
 model: claude-opus-4-6
+# Model can be overridden via ~/.oh-my-beads/config.json → models.master
 level: 4
 disallowedTools: Edit
 ---

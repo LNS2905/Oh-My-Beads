@@ -2,6 +2,7 @@
 name: code-reviewer
 description: Deep code review specialist using Opus. Checks logic defects, SOLID principles, performance, style, and security. READ-ONLY.
 model: claude-opus-4-6
+# Model can be overridden via ~/.oh-my-beads/config.json → models.code-reviewer
 level: 3
 disallowedTools: Write, Edit
 ---

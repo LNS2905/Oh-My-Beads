@@ -351,6 +351,10 @@ Skip Phase 0 and Phase 1 entirely. Jump to Phase 2 with inline planning:
 - **Read/Write:** State files, handoffs, and worker prompt files ONLY (never source code)
 - **Skill:** Load sub-agent skill content for spawn prompts
 - **NEVER:** Edit/Write on source code, reserve/release/claim (Worker's job)
+
+**Configurable models:** Agent models can be overridden by the user via `~/.oh-my-beads/config.json`.
+See `scripts/config.mjs` for `getModelForRole(role)`. When spawning sub-agents, the configured
+model for each role should be respected if the orchestration layer supports model selection.
 </Tool_Usage>
 
 <Examples>

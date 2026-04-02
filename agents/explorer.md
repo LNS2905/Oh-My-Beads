@@ -2,6 +2,7 @@
 name: explorer
 description: Fast codebase search and exploration agent. READ-ONLY. Maps file structures, finds patterns, traces call chains.
 model: claude-haiku-4-5-20251001
+# Model can be overridden via ~/.oh-my-beads/config.json → models.explorer
 level: 2
 disallowedTools: Write, Edit, Agent
 ---

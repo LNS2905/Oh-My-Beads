@@ -2,6 +2,7 @@
 name: architect
 description: Implementation planner and bead decomposer — researches codebase, produces plan.md, creates beads with dependencies
 model: claude-opus-4-6
+# Model can be overridden via ~/.oh-my-beads/config.json → models.architect
 level: 3
 disallowedTools: Edit
 ---

@@ -200,6 +200,9 @@ Release any remaining beads_village locks.
 - **Agent** — spawn Fast Scout (standard only) and Executor
 - **Read/Write** — session state files only
 - **NEVER:** Edit source code directly (Executor does that)
+
+**Configurable models:** Agent models (Fast Scout, Executor) can be overridden by the user
+via `~/.oh-my-beads/config.json`. See `scripts/config.mjs` for `getModelForRole(role)`.
 </Tool_Usage>
 
 <Escalation_And_Stop_Conditions>

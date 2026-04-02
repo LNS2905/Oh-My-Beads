@@ -3,8 +3,8 @@
 /**
  * oh-my-beads keyword detector — UserPromptSubmit hook.
  *
- * Detects "oh-my-beads" / "omb" keywords in user prompts and signals the
- * skill-loader to invoke the using-oh-my-beads bootstrap skill.
+ * Detects "oh-my-beads" / "omb" keywords in user prompts and routes
+ * directly to the appropriate skill (master, fast-scout, or executor).
  * Also handles "cancel omb" / "stop omb" to clear active sessions.
  */
 
@@ -278,8 +278,13 @@ process.stdin.on("end", () => {
       const phase = intent === "turbo" ? "fast_turbo" : "fast_scout";
       writeSessionState(phase, "mr.fast", intent);
       const { augmented } = upgradePrompt(raw, { mode: "mr.fast" });
+
+      // Route directly to the appropriate skill based on intent:
+      // - turbo → executor (skip fast-scout entirely)
+      // - standard → fast-scout (then executor)
+      const skill = intent === "turbo" ? "oh-my-beads:executor" : "oh-my-beads:fast-scout";
       hookOutput(
-        `[MAGIC KEYWORD: mr-fast]\n\nYou MUST invoke the skill using the Skill tool:\n\nSkill: oh-my-beads:mr-fast\n\nIntent: ${intent}\n\nUser request:\n${augmented}\n\nIMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`
+        `[MAGIC KEYWORD: mr-fast]\n\nYou MUST invoke the skill using the Skill tool:\n\nSkill: ${skill}\n\nIntent: ${intent}\n\nUser request:\n${augmented}\n\nIMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`
       );
       return;
     }
@@ -301,7 +306,7 @@ process.stdin.on("end", () => {
     writeSessionState("bootstrap", "mr.beads");
     const { augmented } = upgradePrompt(raw, { mode: "mr.beads" });
     hookOutput(
-      `[MAGIC KEYWORD: oh-my-beads]\n\nYou MUST invoke the skill using the Skill tool:\n\nSkill: oh-my-beads:using-oh-my-beads\n\nUser request:\n${augmented}\n\nIMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`
+      `[MAGIC KEYWORD: oh-my-beads]\n\nYou MUST invoke the skill using the Skill tool:\n\nSkill: oh-my-beads:master\n\nUser request:\n${augmented}\n\nIMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`
     );
     return;
   }

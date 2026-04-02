@@ -898,11 +898,11 @@ test("detects 'mrfast' keyword", () => {
   assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "MAGIC KEYWORD: mr-fast", "mrfast keyword");
 });
 
-test("mr.fast invokes correct skill", () => {
+test("mr.fast invokes correct skill (standard → fast-scout)", () => {
   resetState();
   const { output } = runScript("keyword-detector.mjs", { query: "mr.fast debug auth issue" });
   const parsed = parseOutput(output);
-  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "oh-my-beads:mr-fast", "correct skill");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "oh-my-beads:fast-scout", "standard intent routes to fast-scout");
 });
 
 test("ignores informational queries about mr.fast", () => {
@@ -3176,7 +3176,7 @@ test("'setup omb' routes to setup skill (not Mr.Beads)", () => {
   const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
   assertContains(ctx, "MAGIC KEYWORD: setup-omb", "should trigger setup keyword");
   assertContains(ctx, "oh-my-beads:setup", "should route to setup skill");
-  assertNotContains(ctx, "oh-my-beads:using-oh-my-beads", "should NOT route to Mr.Beads bootstrap");
+  assertNotContains(ctx, "oh-my-beads:master", "should NOT route to Mr.Beads master");
   assertNotContains(ctx, "MAGIC KEYWORD: oh-my-beads", "should NOT trigger Mr.Beads keyword");
 });
 
@@ -3233,7 +3233,7 @@ test("'omb build me X' still routes to Mr.Beads (no regression)", () => {
   const parsed = parseOutput(output);
   const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
   assertContains(ctx, "MAGIC KEYWORD: oh-my-beads", "should trigger Mr.Beads keyword");
-  assertContains(ctx, "oh-my-beads:using-oh-my-beads", "should route to Mr.Beads bootstrap skill");
+  assertContains(ctx, "oh-my-beads:master", "should route to Mr.Beads master skill");
   assertNotContains(ctx, "setup-omb", "should NOT trigger setup");
   assertNotContains(ctx, "doctor-omb", "should NOT trigger doctor");
 });

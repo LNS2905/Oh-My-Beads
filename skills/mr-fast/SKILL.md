@@ -1,10 +1,13 @@
 ---
 name: mr-fast
 description: >-
-  Mr.Fast mode bootstrap — lightweight workflow for quick fixes and small changes.
+  Mr.Fast mode reference — lightweight workflow for quick fixes and small changes.
   Two execution paths: Turbo (single Executor) and Standard (Fast Scout → Executor).
   No mandatory review agent — Executor self-verifies. beads_village used only for
   file locking when needed.
+  NOTE: keyword-detector now routes directly to oh-my-beads:executor (turbo) or
+  oh-my-beads:fast-scout (standard). This skill is no longer the entry point but
+  can still be invoked manually via /oh-my-beads:mr-fast.
 level: 3
 ---
 
@@ -12,9 +15,14 @@ level: 3
 Mr.Fast is the lightweight mode of Oh-My-Beads. While Mr.Beads provides a thorough
 multi-phase workflow with HITL gates for complex features, Mr.Fast targets quick fixes:
 bug fixes, small code changes, root cause analysis, and minor refactors.
-Two execution paths based on intent classification (set by keyword-detector):
-- **Turbo** — single Executor, no analysis phase, no beads_village init
-- **Standard** — Fast Scout analysis → Executor implementation
+
+**Routing:** The keyword-detector routes directly to the appropriate skill:
+- **Turbo** intent → `oh-my-beads:executor` (single Executor, no analysis phase)
+- **Standard** intent → `oh-my-beads:fast-scout` (Fast Scout analysis → Executor)
+- **Complex** intent → Suggests Mr.Beads instead (no session activated)
+
+This skill (`oh-my-beads:mr-fast`) is retained for manual invocation but is no longer
+the automatic entry point from keyword detection.
 </Purpose>
 
 <Use_When>

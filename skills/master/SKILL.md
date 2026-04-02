@@ -136,6 +136,19 @@ Skip Phase 0 and Phase 1 entirely. Jump to Phase 2 with inline planning:
      model="opus"
    )
    ```
+   **Parallel Scouts (complex, multi-domain requests):**
+   For requests that span multiple distinct domains or areas (e.g., backend API + frontend UI + infrastructure),
+   Master MAY spawn 2-3 Scout subagents in parallel, each with a different exploration focus:
+   ```
+   Agent(description="Scout exploration — backend patterns", prompt="...\n## Focus Area\nBackend: API design, data models, service layer...", model="opus")
+   Agent(description="Scout exploration — frontend patterns", prompt="...\n## Focus Area\nFrontend: components, state management, routing...", model="opus")
+   Agent(description="Scout exploration — infrastructure",    prompt="...\n## Focus Area\nInfrastructure: deployment, CI/CD, configuration...", model="opus")
+   ```
+   Each parallel Scout receives the same user request and LEARNINGS_CONTEXT but a different `## Focus Area` section
+   directing it to explore one specific domain. Master then synthesizes all Scout outputs into a single unified
+   `.oh-my-beads/history/<feature>/CONTEXT.md` — merging decisions, deduplicating overlaps, and resolving conflicts.
+   For single-domain or straightforward requests, one Scout is sufficient — do not force parallelism unnecessarily.
+
    Scout produces `.oh-my-beads/history/<feature>/CONTEXT.md` with locked decisions.
 
    **HITL Gate 1:** Present locked decisions to user. User approves or revises.

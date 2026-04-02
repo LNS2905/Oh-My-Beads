@@ -113,47 +113,92 @@ Skip Phase 0 and Phase 1 entirely. Jump to Phase 2 with inline planning:
    LEARNINGS_CONTEXT is injected into both the Scout spawn prompt (Phase 1) and the
    Architect spawn prompt (Phase 2).
 
-1. **Phase 1: Requirements & Clarification**
+1. **Phase 1: Requirements & Clarification (Two-Spawn Pattern)**
    *(Complex path only — skipped for simple path)*
 
    <HARD-GATE>
    **NEVER research the codebase yourself.** You are the ORCHESTRATOR — you delegate.
    DO NOT use Read, Glob, or Grep on source code files. The Scout handles all codebase exploration.
-   You MUST spawn a Scout subagent via the Agent tool. If you find yourself reading source code, STOP and spawn Scout instead.
+   You MUST spawn Scout subagents via the Agent tool. If you find yourself reading source code, STOP and spawn Scout instead.
    </HARD-GATE>
 
-   Spawn Scout agent with LEARNINGS_CONTEXT from Phase 0.
-   Use the Agent tool. The prompt should include:
-   - The full content of the oh-my-beads:scout skill (read `skills/scout/SKILL.md`)
-   - The user's request
-   - The feature slug
-   - LEARNINGS_CONTEXT from Phase 0
+   Phase 1 uses a three-step pattern: Scout explores → Master runs Q&A → Scout synthesizes.
+
+   **Step 1 — Spawn Scout (Exploration Mode):**
+
+   Scout explores the codebase, classifies the domain, identifies gray areas, and returns
+   a structured list of prioritized questions with concrete options — but does NOT ask them.
 
    ```
    Agent(
      description="Scout exploration",
-     prompt="<oh-my-beads:scout skill>\n\n## User Request\n<request>\n\n## Feature Slug\n<slug>\n\n<LEARNINGS_CONTEXT>",
+     prompt="## Mode: Exploration\n\n<oh-my-beads:scout skill content>\n\n## User Request\n<request>\n\n## Feature Slug\n<slug>\n\n<LEARNINGS_CONTEXT>",
      model="opus"
    )
    ```
+
+   Scout returns: exploration findings (codebase patterns, architecture notes, domain classification)
+   + a prioritized questions list (max 8 questions, each with impact level, context, and options).
+
    **Parallel Scouts (complex, multi-domain requests):**
    For requests that span multiple distinct domains or areas (e.g., backend API + frontend UI + infrastructure),
-   Master MAY spawn 2-3 Scout subagents in parallel, each with a different exploration focus:
+   Master MAY spawn 2-3 Scout subagents in Exploration Mode in parallel, each with a different focus:
    ```
-   Agent(description="Scout exploration — backend patterns", prompt="...\n## Focus Area\nBackend: API design, data models, service layer...", model="opus")
-   Agent(description="Scout exploration — frontend patterns", prompt="...\n## Focus Area\nFrontend: components, state management, routing...", model="opus")
-   Agent(description="Scout exploration — infrastructure",    prompt="...\n## Focus Area\nInfrastructure: deployment, CI/CD, configuration...", model="opus")
+   Agent(description="Scout exploration — backend patterns", prompt="## Mode: Exploration\n...\n## Focus Area\nBackend: API design, data models, service layer...", model="opus")
+   Agent(description="Scout exploration — frontend patterns", prompt="## Mode: Exploration\n...\n## Focus Area\nFrontend: components, state management, routing...", model="opus")
+   Agent(description="Scout exploration — infrastructure",    prompt="## Mode: Exploration\n...\n## Focus Area\nInfrastructure: deployment, CI/CD, configuration...", model="opus")
    ```
-   Each parallel Scout receives the same user request and LEARNINGS_CONTEXT but a different `## Focus Area` section
-   directing it to explore one specific domain. Master then synthesizes all Scout outputs into a single unified
-   `.oh-my-beads/history/<feature>/CONTEXT.md` — merging decisions, deduplicating overlaps, and resolving conflicts.
+   Each parallel Scout receives the same user request and LEARNINGS_CONTEXT but a different `## Focus Area` section.
+   Master merges all exploration outputs (dedup overlaps, combine question lists) before Step 2.
    For single-domain or straightforward requests, one Scout is sufficient — do not force parallelism unnecessarily.
 
-   Scout produces `.oh-my-beads/history/<feature>/CONTEXT.md` with locked decisions.
+   **Step 2 — Master-Managed Q&A Loop:**
+
+   Master parses the questions from Scout's exploration output, then asks them one at a time
+   at the top level (where interactive dialogue with the user works).
+
+   ```
+   DECISIONS = []
+   decision_counter = 1
+
+   For each question in Scout's output (highest impact first):
+     Present to user via AskUserQuestion:
+       "<Question title>\n<Context>\nOptions:\n<options list>"
+     
+     Record answer as locked decision:
+       D{N}: <decision>. Rejected: <other options>.
+     
+     If user says "proceed", "skip", "that's enough":
+       → Stop asking remaining questions
+       → Note skipped questions as "Deferred to planning"
+   ```
+
+   **Decision format:** `D1: Auth uses JWT (stateless). Rejected: sessions, OAuth2.`
+   Decision IDs (D1, D2...) are permanent — never reuse or renumber.
+
+   **"Just decide" response** — if user delegates a question:
+   Make a reasonable default, note as `D{N}: <decision> (Scout-defaulted: <rationale>)`.
+
+   **Contradiction handling** — if an answer contradicts an earlier decision:
+   Flag explicitly: "This conflicts with D{X}. Which takes priority?" before recording.
+
+   **Step 3 — Spawn Scout (Synthesis Mode):**
+
+   Scout receives all exploration findings + locked decisions, writes CONTEXT.md.
+
+   ```
+   Agent(
+     description="Scout synthesis",
+     prompt="## Mode: Synthesis\n\n<oh-my-beads:scout skill content>\n\n## Exploration Findings\n<exploration output from Step 1>\n\n## Locked Decisions\n<D1, D2, D3...>\n\n## Feature Slug\n<slug>",
+     model="opus"
+   )
+   ```
+
+   Scout writes `.oh-my-beads/history/<feature>/CONTEXT.md` and returns completion report.
 
    **HITL Gate 1:** Present locked decisions to user. User approves or revises.
    ```
-   AskUserQuestion: "Review decisions D1-DN. Approve to proceed to planning?"
+   AskUserQuestion: "Review decisions D1-DN in CONTEXT.md. Approve to proceed to planning?"
    Options: [Approve, Revise (re-run Scout with feedback)]
    ```
 
@@ -460,6 +505,9 @@ Why bad: Violates phase-at-a-time principle. Only current phase beads should exi
 - [ ] Intent classified (trivial/simple/complex) and logged in session.json
 - [ ] Phase 0: critical-patterns.md loaded + domain keywords grepped (complex path)
 - [ ] Phase 0: LEARNINGS_CONTEXT built and injected into Scout and Architect prompts
+- [ ] Phase 1: Scout spawned in Exploration Mode (returned questions, no AskUserQuestion)
+- [ ] Phase 1: Master Q&A loop completed (decisions locked as D1, D2...)
+- [ ] Phase 1: Scout spawned in Synthesis Mode (CONTEXT.md written)
 - [ ] All beads closed (ls(status="open") returns empty)
 - [ ] All phases completed in order (0-7, with phase-at-a-time loops as needed)
 - [ ] All 3 HITL gates were presented and approved
@@ -502,7 +550,8 @@ Phase state values (session.json `current_phase`):
 
 | Phase | Agent | Context Given |
 |-------|-------|--------------|
-| 1 | Scout | User request + slug + LEARNINGS_CONTEXT |
+| 1 (Step 1) | Scout (Exploration) | User request + slug + LEARNINGS_CONTEXT |
+| 1 (Step 3) | Scout (Synthesis) | Exploration findings + locked decisions + slug |
 | 2 | Architect | CONTEXT.md + handoff + LEARNINGS_CONTEXT |
 | 3 | Architect | plan.md + CONTEXT.md + phase scope |
 | 4 | Validating | Current phase beads + plan + CONTEXT.md |

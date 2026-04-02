@@ -12,18 +12,26 @@ One file per feature. Multiple learnings in a single file — separate with `---
 ---
 date: YYYY-MM-DD
 feature: <feature-name>
+domain: <primary domain tag>               # e.g., security, architecture, testing, performance,
+                                           # database, auth, api, ui, devops, agent-coordination,
+                                           # bead-decomposition, or custom
 categories: [pattern, decision, failure, exit-audit]   # include only categories present
 severity: critical | standard              # use "critical" if ANY entry is critical
 tags: [tag1, tag2, tag3]                   # domains covered
 # --- Optional fields (omit if not applicable) ---
-phase_origin: <phase name>                 # e.g., "phase_6_execution", "phase_7_review"
+phase_origin: <phase name>                 # e.g., "phase_5_execution", "phase_6_review"
 story_context: <story name from plan.md>   # e.g., "Story 2: Token Refresh Endpoint"
 decisions_referenced: [D1, D3]             # which locked decisions are relevant
 ---
 ```
 
+The `domain` field is the primary technical area this learning applies to. Use standard domain
+tags where possible: `security`, `architecture`, `testing`, `performance`, `database`, `auth`,
+`api`, `ui`, `devops`, `agent-coordination`, `bead-decomposition`. Custom domain tags are
+allowed for project-specific areas.
+
 The last three fields (`phase_origin`, `story_context`, `decisions_referenced`) are optional.
-Existing learnings files without these fields remain valid.
+Existing learnings files without `domain` or these fields remain valid.
 
 ---
 
@@ -36,6 +44,7 @@ Repeat for each distinct learning. Separate entries with `---`.
 
 **Category:** pattern | decision | failure
 **Severity:** critical | standard
+**Domain:** <primary domain tag>
 **Tags:** [tag1, tag2]
 **Applicable-when:** <one sentence — under what conditions should future agents use this?>
 
@@ -57,7 +66,7 @@ additional context.>
 
 ## Execution Context (optional)
 
-**Phase origin:** <which phase produced this learning (e.g., Phase 6: Execution, Phase 7: Review)>
+**Phase origin:** <which phase produced this learning (e.g., Phase 5: Execution, Phase 6: Review)>
 **Story context:** <which story from plan.md this relates to, if applicable>
 **Decisions referenced:** <which locked decisions (D1, D2...) are relevant>
 **Retry count:** <how many Worker retries were needed, if applicable (0 = first attempt)>
@@ -75,10 +84,11 @@ This section may be omitted entirely if no execution metadata is relevant.
 ---
 date: 2026-03-15
 feature: user-auth-refresh
+domain: auth
 categories: [pattern, failure]
 severity: critical
 tags: [auth, database, testing]
-phase_origin: phase_6_execution
+phase_origin: phase_5_execution
 story_context: "Story 2: Token Refresh Endpoint"
 decisions_referenced: [D3]
 ---
@@ -87,6 +97,7 @@ decisions_referenced: [D3]
 
 **Category:** failure
 **Severity:** critical
+**Domain:** auth
 **Tags:** [auth, concurrency]
 **Applicable-when:** Implementing any token refresh or session renewal with parallel requests
 
@@ -107,7 +118,7 @@ or optimistic locking). Always add a concurrency integration test with 10 parall
 
 ## Execution Context
 
-**Phase origin:** Phase 6 — Worker implementation
+**Phase origin:** Phase 5 — Worker implementation
 **Story context:** Story 2: Token Refresh Endpoint
 **Decisions referenced:** D3 (JWT stateless auth)
 **Retry count:** 1 (first attempt missed concurrency case)
@@ -120,6 +131,7 @@ or optimistic locking). Always add a concurrency integration test with 10 parall
 
 **Category:** pattern
 **Severity:** standard
+**Domain:** api
 **Tags:** [api, testing]
 **Applicable-when:** Creating any new CRUD endpoint
 

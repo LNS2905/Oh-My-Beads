@@ -2,10 +2,10 @@
 name: compounding
 description: >-
   Capture learnings from completed features to make future work faster.
-  Invoke after Phase 7 review completes and all beads are closed. Runs 4 parallel
+  Invoke after Phase 6 review completes and all beads are closed. Runs 4 parallel
   analysis agents (patterns/decisions/failures/exit-audit), synthesizes into
   .oh-my-beads/history/learnings/YYYYMMDD-<slug>.md, promotes critical items to
-  critical-patterns.md. Trigger: Phase 8 of Master workflow, or manual invocation.
+  critical-patterns.md. Trigger: Phase 7 of Master workflow, or manual invocation.
   Key output: critical-patterns.md is read by Scout and Architect at session start —
   this is the flywheel that makes the ecosystem smarter over time.
 level: 3
@@ -18,7 +18,7 @@ preventing repeat failures. Skip this step and the ecosystem stays flat; run it 
 </Purpose>
 
 <Use_When>
-- Phase 8 of Master workflow (all beads closed, review complete)
+- Phase 7 of Master workflow (all beads closed, review complete)
 - After debugging sessions that surfaced non-obvious root causes
 - After any cancelled session that produced useful learnings
 - Manual invocation: "compound", "capture learnings", "what did we learn"
@@ -44,13 +44,21 @@ every cycle.
 - Do NOT fabricate findings — if the feature ran smoothly, write that
 </Execution_Policy>
 
+<HARD-GATE>
+**Learnings MUST be written before closing the feature.** The Master MUST invoke compounding
+and wait for the learnings file to be written before marking the feature as complete. Closing
+a feature without running compounding breaks the flywheel — future sessions lose the benefit
+of this session's experience. This is non-negotiable for any feature that completes Phase 5
+execution. The only exception is trivial one-line changes where nothing reusable emerged.
+</HARD-GATE>
+
 <Steps>
 1. **Phase 1: Gather Context**
    Read all artifacts from the completed feature:
    ```
    .oh-my-beads/history/<feature>/CONTEXT.md     — locked decisions
    .oh-my-beads/plans/plan.md                    — implementation plan
-   .oh-my-beads/history/<feature>/WRAP-UP.md     — Phase 8 summary (if exists)
+   .oh-my-beads/history/<feature>/WRAP-UP.md     — Phase 7 summary (if exists)
    .oh-my-beads/state/session.json               — runtime state
    .oh-my-beads/state/tool-tracking.json         — files modified, failures
    .oh-my-beads/state/subagent-tracking.json     — agent lifecycle
@@ -194,7 +202,9 @@ Write to: /tmp/omb-compounding-exit-audit.md",
    **Step 3.1 — Read all four temp files**
 
    **Step 3.2 — Triage each finding:**
-   - `domain`: which technical area (e.g., auth, database, testing, bead-decomposition, agent-coordination)
+   - `domain`: which technical area — use one of the standard domain tags:
+     `security`, `architecture`, `testing`, `performance`, `database`, `auth`,
+     `api`, `ui`, `devops`, `agent-coordination`, `bead-decomposition`, or a custom tag
    - `severity`: `critical` (affects multiple features, prevents serious waste) vs `standard` (valuable but specific)
    - `applicable-when`: concise condition for when future agents should apply this
    - `category`: `pattern` | `decision` | `failure` | `exit-audit`
@@ -209,15 +219,17 @@ Write to: /tmp/omb-compounding-exit-audit.md",
 
    **Step 3.5 — Prune critical-patterns.md if oversized:**
 
+   **Threshold: 50 entries. Archive count: 20 oldest entries.**
+
    After writing new learnings, count total entries in critical-patterns.md
    (each entry starts with `## [`):
    ```
    Grep pattern="^## \[" path=".oh-my-beads/history/learnings/critical-patterns.md" output_mode="count"
    ```
 
-   If total entries exceed 50:
-   1. Read critical-patterns.md and identify the oldest 20 entries (by date prefix in headers)
-   2. Append those 20 entries to the archive file:
+   If total entries exceed **50**:
+   1. Read critical-patterns.md and identify the **oldest 20** entries (by date prefix in headers)
+   2. Append those **20** entries to the archive file:
       ```
       .oh-my-beads/history/learnings/critical-patterns-archive.md
       ```
@@ -231,9 +243,9 @@ Write to: /tmp/omb-compounding-exit-audit.md",
 
       ---
       ```
-      Append the 20 oldest entries to the archive (do NOT overwrite existing archive content).
-   3. Remove the 20 archived entries from critical-patterns.md
-   4. Log: "Archived 20 oldest patterns to maintain signal-to-noise ratio"
+      Append the **20** oldest entries to the archive (do NOT overwrite existing archive content).
+   3. Remove the **20** archived entries from critical-patterns.md
+   4. Log: "Archived 20 oldest patterns to maintain signal-to-noise ratio (threshold: 50, archived: 20)"
    5. Report in Phase 5 output: `"patterns_archived": 20, "archive_path": ".oh-my-beads/history/learnings/critical-patterns-archive.md"`
 
 4. **Phase 4: Promote Critical Learnings**
@@ -317,9 +329,10 @@ Why bad: Vague. Names no files, no functions, no scenarios. Future agents learn 
 <Final_Checklist>
 - [ ] All feature artifacts read (CONTEXT.md, plan.md, state files)
 - [ ] 4 analysis agents completed (patterns, decisions, failures, exit-audit)
-- [ ] Learnings file written with YAML frontmatter
+- [ ] Learnings file written with YAML frontmatter and domain tags
 - [ ] Critical findings promoted to critical-patterns.md (if any)
-- [ ] critical-patterns.md pruned if >50 entries (oldest 20 archived)
+- [ ] critical-patterns.md pruned if >50 entries (oldest 20 archived to critical-patterns-archive.md)
+- [ ] Learnings written before feature close (HARD-GATE)
 - [ ] Session state updated
 - [ ] Report sent to Master
 </Final_Checklist>
@@ -342,7 +355,7 @@ Feature N+2 starts even smarter...
 ## Red Flags
 
 - Do NOT skip compounding because "we're in a hurry" — the flywheel only works if it runs every cycle
-- Do NOT promote everything as critical — critical-patterns.md is read at session start; automated pruning archives oldest entries when count exceeds 50, but keep promotions genuinely critical to avoid dilution
+- Do NOT promote everything as critical — critical-patterns.md is read at session start; automated pruning archives the oldest 20 entries when count exceeds 50, but keep promotions genuinely critical to avoid dilution
 - Do NOT write generic learnings — "test more carefully" is worthless; name the specific file, function, and scenario
 - Do NOT fabricate findings — if the feature ran smoothly, write that honestly
 </Advanced>

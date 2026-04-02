@@ -28,6 +28,8 @@ const KEYWORDS = [
   { pattern: /\b(?:setup\s+omb|omb\s+setup|setup\s+oh-my-beads)\b/i, action: "setup" },
   // Doctor pattern (before invoke patterns to avoid omb catching it)
   { pattern: /\b(?:doctor\s+omb|omb\s+doctor|doctor\s+oh-my-beads)\b/i, action: "doctor" },
+  // External context pattern (before invoke patterns to avoid omb catching it)
+  { pattern: /\b(?:fetch\s+docs|find\s+docs|external\s+context)\b/i, action: "external-context" },
   // Learn pattern (before invoke patterns to avoid omb catching it)
   { pattern: /\b(?:learn\s+this|save\s+this|remember\s+this\s+pattern)\b/i, action: "learn" },
   // Invoke patterns (mr.fast before omb to avoid omb catching everything)
@@ -276,6 +278,7 @@ process.stdin.on("end", () => {
     if (kw.action === "setup" && (isInformational(clean, "setup omb") || isInformational(clean, "omb setup"))) continue;
     if (kw.action === "doctor" && (isInformational(clean, "doctor omb") || isInformational(clean, "omb doctor"))) continue;
     if (kw.action === "learn" && (isInformational(clean, "learn this") || isInformational(clean, "save this") || isInformational(clean, "remember this pattern"))) continue;
+    if (kw.action === "external-context" && (isInformational(clean, "fetch docs") || isInformational(clean, "find docs") || isInformational(clean, "external context"))) continue;
 
     if (kw.action === "cancel") {
       clearSessionState();
@@ -307,6 +310,13 @@ process.stdin.on("end", () => {
     if (kw.action === "learn") {
       hookOutput(
         `[MAGIC KEYWORD: learn-omb]\n\nYou MUST invoke the skill using the Skill tool:\n\nSkill: oh-my-beads:learner\n\nUser request:\n${raw}\n\nIMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`
+      );
+      return;
+    }
+
+    if (kw.action === "external-context") {
+      hookOutput(
+        `[MAGIC KEYWORD: external-context]\n\nYou MUST invoke the skill using the Skill tool:\n\nSkill: oh-my-beads:external-context\n\nUser request:\n${raw}\n\nIMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`
       );
       return;
     }

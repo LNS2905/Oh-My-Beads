@@ -3288,6 +3288,28 @@ test("'remember this pattern' routes to learner skill", () => {
   assertContains(ctx, "oh-my-beads:learner", "should route to learner skill");
 });
 
+// ---- EXTERNAL CONTEXT KEYWORD ROUTING ----
+
+console.log("\n=== keyword-detector.mjs (External Context Routing) ===\n");
+
+test("'fetch docs for Stripe API' routes to external-context skill", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "fetch docs for Stripe API" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "MAGIC KEYWORD: external-context", "should trigger external-context keyword");
+  assertContains(ctx, "oh-my-beads:external-context", "should route to external-context skill");
+});
+
+test("'find docs for React Router v7' routes to external-context skill", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "find docs for React Router v7" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "MAGIC KEYWORD: external-context", "should trigger external-context keyword");
+  assertContains(ctx, "oh-my-beads:external-context", "should route to external-context skill");
+});
+
 // ---- PROJECT MEMORY: detectProjectEnv ----
 
 console.log("\n=== project-memory.mjs (detectProjectEnv) ===\n");

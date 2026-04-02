@@ -187,6 +187,8 @@ node scripts/state-tools/state-bridge.cjs status [--session-id ID]
 | **Mode conflict prevention** | keyword-detector.mjs | Blocks "mr.fast" during active Mr.Beads session (and vice versa) |
 | **HARD-GATE enforcement** | `<HARD-GATE>` tags in all execution skills | Non-negotiable behavioral constraints in Worker, Reviewer, Swarming, Compounding, Validating |
 | **Phase-at-a-time decomposition** | Architect + Master loop | Only current phase beads exist, preventing scope sprawl |
+| **Priority context notepad** | session-start.mjs + post-tool-verifier.mjs | `<remember priority>` writes to priority-context.md; loaded every session start |
+| **Working memory** | post-tool-verifier.mjs | `<remember>` tags append to history/working-memory.md with timestamps |
 
 ### Agent Role Matrix
 

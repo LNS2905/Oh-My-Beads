@@ -481,6 +481,43 @@ All gates are **mandatory and blocking**.
 | User cancels mid-session | Write state, clean up active beads |
 | Phase-at-a-time loop cancel | Cancel signal respected between loop iterations |
 
+## Priority Context & Remember Tags
+
+Agents can persist critical knowledge across sessions and compactions using `<remember>` tags in their output.
+
+### Priority Context (`<remember priority>`)
+
+Wrap critical, must-never-forget information in `<remember priority>` tags:
+
+```
+<remember priority>Always run database migrations before deploying. Auth module uses JWT with 24h expiry.</remember>
+```
+
+- **Writes to:** `.oh-my-beads/priority-context.md` (project-level, committed to repo)
+- **Behavior:** Replaces entire file content (max 500 chars)
+- **Loaded:** Every session start, injected as `[Priority Context]` in additionalContext
+- **Survives:** Sessions AND compactions (persisted to disk)
+- **Use for:** Critical patterns, architecture decisions, safety constraints
+
+### Working Memory (`<remember>`)
+
+Wrap session-relevant findings in plain `<remember>` tags:
+
+```
+<remember>Found that the config module reads from both ENV and .env file, ENV takes precedence</remember>
+```
+
+- **Writes to:** `.oh-my-beads/history/working-memory.md` (project-level, committed to repo)
+- **Behavior:** Appends with timestamp (never replaces)
+- **Use for:** Investigation findings, discovered patterns, context for future sessions
+
+### Usage Rules
+
+- Any agent can use `<remember>` tags in tool output (Bash, Agent, etc.)
+- `<remember priority>` is for truly critical context only — it replaces the entire priority file
+- `<remember>` (without priority) appends and accumulates over time
+- Processing happens in `post-tool-verifier.mjs` (PostToolUse hook)
+
 ## Directory Structure
 
 ```
@@ -568,11 +605,13 @@ OhMyBeads/                              # Plugin root (git repo)
 │   │   ├── session.json                # Current phase, progress, reinforcement count
 │   │   ├── tool-tracking.json          # Files modified, failures detected
 │   │   └── subagent-tracking.json      # Spawned subagent lifecycle
+│   ├── priority-context.md             # Critical context loaded every session (max 500 chars)
 │   ├── plans/plan.md                   # Approved implementation plan
 │   ├── handoffs/phase_<N>.md           # Phase transition context
 │   └── history/
 │       ├── <feature>/CONTEXT.md        # Locked decisions
 │       ├── <feature>/WRAP-UP.md        # Session summary
+│       ├── working-memory.md           # Accumulated working memory (<remember> tags)
 │       └── learnings/                  # Compounding flywheel
 │           ├── critical-patterns.md    # Promoted critical learnings (read at session start)
 │           └── YYYYMMDD-<slug>.md      # Per-feature structured learnings

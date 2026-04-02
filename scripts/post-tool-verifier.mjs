@@ -197,6 +197,42 @@ process.stdin.on("end", async () => {
     }
   } catch { /* best effort — don't block tool use */ }
 
+  // --- <remember> tag processing ---
+  // When tool output contains <remember priority>content</remember>,
+  // write content to .oh-my-beads/priority-context.md (replacing existing).
+  // When output contains <remember>content</remember>,
+  // append to .oh-my-beads/history/working-memory.md with timestamp.
+  try {
+    const rawOutput = typeof toolOutput === "string" ? toolOutput : JSON.stringify(toolOutput);
+    // Match <remember priority>...</remember> (priority context — replaces file)
+    const priorityMatch = rawOutput.match(/<remember\s+priority>([\s\S]*?)<\/remember>/);
+    if (priorityMatch) {
+      const content = priorityMatch[1].trim().substring(0, 500); // Max 500 chars
+      if (content.length > 0) {
+        const artifactsDir = join(directory, ".oh-my-beads");
+        mkdirSync(artifactsDir, { recursive: true });
+        writeFileSync(join(artifactsDir, "priority-context.md"), content);
+      }
+    }
+    // Match <remember>...</remember> (working memory — appends)
+    const workingMatches = rawOutput.matchAll(/<remember>(?![\s]*priority)([\s\S]*?)<\/remember>/g);
+    for (const match of workingMatches) {
+      const content = match[1].trim();
+      if (content.length > 0) {
+        const historyDir = join(directory, ".oh-my-beads", "history");
+        mkdirSync(historyDir, { recursive: true });
+        const wmPath = join(historyDir, "working-memory.md");
+        const timestamp = new Date().toISOString();
+        const entry = `\n---\n**${timestamp}**\n${content}\n`;
+        // Append to file (create if it doesn't exist)
+        try {
+          const existing = existsSync(wmPath) ? readFileSync(wmPath, "utf8") : "";
+          writeFileSync(wmPath, existing + entry);
+        } catch { /* best effort */ }
+      }
+    }
+  } catch { /* best effort — don't block tool use */ }
+
   // Generate advisory context if failure detected
   // Failure messages are warnings — suppressed at quiet level 2
   const quiet = getQuietLevel();

@@ -173,6 +173,19 @@ process.stdin.on("end", () => {
     }
   } catch { /* best effort — don't block session start */ }
 
+  // Load priority context (project-level, committed to repo)
+  try {
+    const priorityContextPath = join(cwd, ".oh-my-beads", "priority-context.md");
+    if (existsSync(priorityContextPath)) {
+      const raw = readFileSync(priorityContextPath, "utf8").trim();
+      if (raw.length > 0) {
+        // Cap at 500 chars as per spec
+        const content = raw.length > 500 ? raw.substring(0, 500) : raw;
+        parts.unshift(`[Priority Context]\n${content}`);
+      }
+    }
+  } catch { /* best effort — don't block session start */ }
+
   // Enhanced plugin banner (compact, max 5 lines)
   let bannerLine = `oh-my-beads ${version} loaded.`;
 

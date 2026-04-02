@@ -3861,6 +3861,101 @@ test("session-start scans plans directory when no worker_prompt_file in checkpoi
   assertContains(ctx, "worker-bd-10.md", "should mention the scanned worker prompt file");
 });
 
+// ---- PRIORITY CONTEXT NOTEPAD ----
+
+console.log("\n=== session-start.mjs (Priority Context) ===\n");
+
+test("session-start injects priority context when file exists", () => {
+  resetState();
+  // Create priority-context.md at project level
+  const artifactsDir = join(TEMP_DIR, ".oh-my-beads");
+  mkdirSync(artifactsDir, { recursive: true });
+  writeFileSync(join(artifactsDir, "priority-context.md"), "Always use snake_case for API fields.\nNever modify the auth module without review.");
+  const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "startup" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "[Priority Context]", "should have Priority Context label");
+  assertContains(ctx, "Always use snake_case", "should inject priority context content");
+  assertContains(ctx, "Never modify the auth module", "should inject full content");
+  // Cleanup
+  rmSync(join(artifactsDir, "priority-context.md"), { force: true });
+});
+
+test("session-start skips priority context when file is missing", () => {
+  resetState();
+  // Ensure no priority-context.md exists
+  rmSync(join(TEMP_DIR, ".oh-my-beads", "priority-context.md"), { force: true });
+  const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "startup" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertNotContains(ctx, "[Priority Context]", "should not have Priority Context when file missing");
+});
+
+// ---- REMEMBER TAG PROCESSING ----
+
+console.log("\n=== post-tool-verifier.mjs (Remember Tags) ===\n");
+
+test("<remember priority> writes to priority-context.md (replacing existing)", () => {
+  resetState();
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
+  // Ensure directory exists
+  mkdirSync(join(TEMP_DIR, ".oh-my-beads"), { recursive: true });
+  // Pre-existing content to verify it gets replaced
+  writeFileSync(join(TEMP_DIR, ".oh-my-beads", "priority-context.md"), "old content");
+  runScript("post-tool-verifier.mjs", {
+    cwd: TEMP_DIR, tool_name: "Bash",
+    tool_output: "Some output <remember priority>Critical: Always run migrations before deploy</remember> more output",
+  });
+  const pcPath = join(TEMP_DIR, ".oh-my-beads", "priority-context.md");
+  assert(existsSync(pcPath), "priority-context.md should exist");
+  const content = readFileSync(pcPath, "utf8");
+  assertContains(content, "Critical: Always run migrations before deploy", "should have new priority content");
+  assertNotContains(content, "old content", "should have replaced old content");
+});
+
+test("<remember> appends to working-memory.md with timestamp", () => {
+  resetState();
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
+  mkdirSync(join(TEMP_DIR, ".oh-my-beads", "history"), { recursive: true });
+  // Remove existing working memory
+  rmSync(join(TEMP_DIR, ".oh-my-beads", "history", "working-memory.md"), { force: true });
+  runScript("post-tool-verifier.mjs", {
+    cwd: TEMP_DIR, tool_name: "Bash",
+    tool_output: "Result: <remember>Found that the auth module uses JWT tokens with 24h expiry</remember>",
+  });
+  const wmPath = join(TEMP_DIR, ".oh-my-beads", "history", "working-memory.md");
+  assert(existsSync(wmPath), "working-memory.md should exist");
+  const content = readFileSync(wmPath, "utf8");
+  assertContains(content, "Found that the auth module uses JWT tokens with 24h expiry", "should have remember content");
+  assertContains(content, "---", "should have separator");
+  // Verify timestamp format (ISO string)
+  assert(/\d{4}-\d{2}-\d{2}T/.test(content), "should contain ISO timestamp");
+});
+
+test("<remember> appends multiple entries", () => {
+  resetState();
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
+  mkdirSync(join(TEMP_DIR, ".oh-my-beads", "history"), { recursive: true });
+  rmSync(join(TEMP_DIR, ".oh-my-beads", "history", "working-memory.md"), { force: true });
+  // First entry
+  runScript("post-tool-verifier.mjs", {
+    cwd: TEMP_DIR, tool_name: "Bash",
+    tool_output: "<remember>First finding: config uses port 3000</remember>",
+  });
+  // Second entry
+  runScript("post-tool-verifier.mjs", {
+    cwd: TEMP_DIR, tool_name: "Bash",
+    tool_output: "<remember>Second finding: database is PostgreSQL</remember>",
+  });
+  const wmPath = join(TEMP_DIR, ".oh-my-beads", "history", "working-memory.md");
+  const content = readFileSync(wmPath, "utf8");
+  assertContains(content, "First finding: config uses port 3000", "should have first entry");
+  assertContains(content, "Second finding: database is PostgreSQL", "should have second entry");
+  // Should have 2 separators (one per entry)
+  const separatorCount = (content.match(/---/g) || []).length;
+  assert(separatorCount >= 2, `should have at least 2 separators, got ${separatorCount}`);
+});
+
 // ============================================================
 // SUMMARY
 // ============================================================

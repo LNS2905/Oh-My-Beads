@@ -22,7 +22,7 @@ Referenced by: `skills/reviewer/references/review-agent-prompts.md`, `skills/rev
 Every review bead MUST have these tags:
 - `review` — identifies it as a review finding
 - `review-p1`, `review-p2`, or `review-p3` — severity tag
-- Source agent tag: `code-quality`, `architecture`, `security`, `test-coverage`, or `learnings-candidate`
+- Source agent tag: `code-architecture`, `security-tests`, or `learnings-candidate`
 
 Optional additional tags:
 - `known-pattern` — matches an entry in critical-patterns.md
@@ -94,8 +94,10 @@ mcp__beads-village__add(
 )
 ```
 
-P1 beads block the feature from closing. They must be resolved during Phase 7
-before the Master can proceed to Phase 8.
+Source agent tags: `code-architecture`, `security-tests`
+
+P1 beads block the feature from closing. They must be resolved during Phase 6
+before the Master can proceed to Phase 7.
 
 ### P2 Finding (Non-blocking follow-up)
 
@@ -118,6 +120,18 @@ mcp__beads-village__add(
   pri=3,
   desc="## Problem\n<description>\n\n## Evidence\n**File:** <path>\n**Lines:** <N-M>\n\n## Proposed Fix\n<specific fix>",
   tags=["review", "review-p3", "<source-agent>"]
+)
+```
+
+### Learnings Candidate
+
+```
+mcp__beads-village__add(
+  title="Learning candidate: <pattern name>",
+  typ="chore",
+  pri=3,
+  desc="## Pattern\n<what keeps happening>\n\n## Evidence\n<review beads>\n\n## Prevention Rule\n<how to catch earlier>\n\n## Compounding Action\n<what to add to critical-patterns.md>",
+  tags=["review", "learnings-candidate"]
 )
 ```
 

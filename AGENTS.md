@@ -11,18 +11,39 @@ Oh-My-Beads has two execution modes:
 | Mode | Keyword | Agents | HITL Gates | beads_village | Use For |
 |------|---------|--------|------------|---------------|---------|
 | **Mr.Beads** | `omb`, `oh-my-beads`, `mr.beads` | Scout → Architect → Worker → Reviewer | 3 gates | Full (tasks + locks) | Complex features, multi-file changes, new systems |
-| **Mr.Fast** | `mr.fast`, `mrfast` | Fast Scout → Executor | 0 gates | Lite (locks only) | Bug fixes, small changes, root cause analysis |
+| **Mr.Fast** | `mr.fast`, `mrfast` | Turbo: Executor only / Standard: Fast Scout → Executor | 0 gates | Turbo: locks only if needed / Standard: lite (locks) | Bug fixes, small changes, root cause analysis |
 
-### Mr.Beads Flow (8-step)
+### Mr.Beads Flow (7-phase, with phase-at-a-time loop)
+
+Master classifies intent first:
+- **Trivial** → suggest Mr.Fast and stop
+- **Simple** → compressed path (skip Scout, inline plan, single decomposition phase)
+- **Complex** → full 7-phase flow
+
 ```
 User prompt → keyword-detector → prompt-leverage (augment) → Mr.Beads bootstrap
-Scout → Gate 1 → Architect → Gate 2 → Plan → Decomposition → Validation → Gate 3 → Workers → Reviews → Full Review → Compounding
+Phase 0: Load learnings → Scout (Phase 1) → Gate 1
+→ Architect planning + persistence (Phase 2) → Gate 2
+→ Architect decomposition for current phase (Phase 3)
+→ Validation (Phase 4) → Gate 3
+→ Workers (Phase 5) → Per-bead review + Full review (Phase 6/6.5)
+→ [loop back to Phase 3 if not final phase]
+→ Summary + Compounding (Phase 7)
 ```
 
-### Mr.Fast Flow (2-step)
+### Mr.Fast Flow (tiered)
+
+Keyword-detector classifies intent:
+- **Turbo** (explicit file + approach) → single Executor, no Fast Scout, no beads_village init
+- **Standard** (moderate fix) → Fast Scout → Executor (self-verifies), no mandatory review
+- **Complex** (too large) → suggest Mr.Beads instead, no active session created
+
 ```
-User prompt → keyword-detector → prompt-leverage (augment) → Mr.Fast bootstrap
-Fast Scout (0-2 questions) → Executor (implement + verify)
+User prompt → keyword-detector → intent classification → prompt-leverage (augment, Light intensity)
+
+Turbo:   → Executor (read → edit → verify → report)
+Standard: → Fast Scout (0-2 questions) → Executor (reserve → implement → self-verify → release)
+Complex:  → "Consider Mr.Beads" suggestion (no session started)
 ```
 
 ### Prompt Leverage (automatic, both modes)
@@ -40,7 +61,7 @@ user's raw prompt before routing to agents. The augmented prompt includes:
 | Verification | Correctness checks |
 | Done Criteria | When to stop |
 
-Mr.Fast caps intensity at Standard (speed over thoroughness).
+Mr.Fast caps intensity at Light (speed over thoroughness).
 Both the original and augmented prompts are passed to agents.
 
 ## Quick Start
@@ -57,49 +78,74 @@ cancel omb
 cancel mrfast
 ```
 
-## The 8-Step Workflow
+## The 7-Phase Workflow
 
-The Master Orchestrator enforces this sequence strictly. No skipping, no reordering.
+The Master Orchestrator classifies intent first, then enforces phase ordering strictly.
+
+### Intent Classification (before any phase)
+
+| Intent | Signals | Action |
+|--------|---------|--------|
+| **Trivial** | Single file, fix typo, rename, < 10 lines | Suggest Mr.Fast and stop |
+| **Simple** | 1-2 files, clear approach, no architectural decisions | Compressed path: skip Scout, inline plan, single decomposition phase |
+| **Complex** | Multi-file, new system, unclear requirements | Full 7-phase flow |
+
+### Full Flow (Complex)
 
 ```
+Phase 0: Load Institutional Memory        [Master: read critical-patterns.md + domain learnings]
+   ↓
 Phase 1: Requirements & Clarification     [Scout]
    ↓
  GATE 1: User approves locked decisions
    ↓
-Phase 2: Planning & Feedback               [Architect]
+Phase 2: Planning, Feedback & Persistence  [Architect + Master plan write]
    ↓
- GATE 2: User approves plan (with enhancement feedback)
+ GATE 2: User approves plan (with enhancement feedback, max 3 revisions)
    ↓
-Phase 3: Plan Persistence                  [Master]
+Phase 3: Team Init & Task Decomposition    [Architect: phase-at-a-time beads + beads_village]
    ↓
-Phase 4: Team Init & Task Breakdown        [Architect + beads_village]
-   ↓
-Phase 5: Validation & Approval             [Validating skill: 8 dimensions + spikes + polishing]
+Phase 4: Validation & Approval             [Validating skill: configurable depth + spikes + polishing]
    ↓
  GATE 3: User chooses Sequential or Parallel
    ↓
-Phase 6: Execution                         [Worker(s) or Swarming skill]
+Phase 5: Execution                         [Worker(s) or Swarming skill]
    ↓
-Phase 7: Per-Task Quality Review           [Reviewer: review mode, per bead]
+Phase 6: Per-Task Quality Review           [Reviewer: review mode, per bead + batch merge verify]
    ↓
-Phase 7.5: Feature-Level Full Review       [Reviewer: full-review mode, 5 specialist agents]
+Phase 6.5: Feature-Level Full Review       [Reviewer: full-review mode, 3 specialist agents]
    ↓
-Phase 8: Final Summary & Compounding       [Master]
+ [Loop back to Phase 3 if not final phase]
+   ↓
+Phase 7: Final Summary & Compounding       [Master + Compounding skill]
 ```
 
 ---
 
 ## Phase Details
 
+### Phase 0: Load Institutional Memory
+*(Complex path only — skipped for simple path)*
+
+**Agent:** Master (direct)
+
+Before entering any phase, the Master builds LEARNINGS_CONTEXT from accumulated learnings:
+- Reads `.oh-my-beads/history/learnings/critical-patterns.md`
+- Greps `learnings/` for domain keywords from the user request
+- Builds LEARNINGS_CONTEXT string injected into Scout and Architect prompts
+
 ### Phase 1: Requirements & Clarification
+*(Complex path only — skipped for simple path)*
 
 **Agent:** Scout | **Skill:** `oh-my-beads:scout`
 
 The Scout clarifies requirements through Socratic dialogue:
 - Reads `critical-patterns.md` (past learnings) to inform questions
-- One question at a time (never batched)
+- One question at a time (HARD-GATE: never batched)
+- Communication standards: plain language, practical-first, scenario-first
 - Domain classification: SEE | CALL | RUN | READ | ORGANIZE
 - Uses domain-specific gray area probes (`scout/references/gray-area-probes.md`)
+- Red Flags section: scope creep, contradictory requirements, under-specification
 - Gray areas probed by impact priority
 - Decisions locked as D1, D2, D3...
 
@@ -107,68 +153,84 @@ The Scout clarifies requirements through Socratic dialogue:
 
 **HITL Gate 1:** User reviews and approves locked decisions before planning begins.
 
-### Phase 2: Planning & Feedback
+### Phase 2: Planning, Feedback & Plan Persistence
 
 **Agent:** Architect (planning mode) | **Skill:** `oh-my-beads:architect`
 
 The Architect:
 1. Reads CONTEXT.md (locked decisions)
 2. Researches codebase deeply
-3. Produces plan with stories, acceptance criteria, file scopes, risks
+3. AI-slop detection: catches scope inflation, premature abstraction, over-validation
+4. Produces plan with stories, acceptance criteria, file scopes, risks
+
+**For simple path:** Master writes a brief inline plan directly (no Architect spawn).
 
 **Output:** Draft plan (returned to Master)
 
-**HITL Gate 2:** User reviews the plan. Can approve, provide enhancement feedback (Architect revises), or start over.
+**HITL Gate 2:** User reviews the plan. Can approve, provide enhancement feedback (Architect revises, max 3 revisions), or start over.
 
-### Phase 3: Plan Persistence
-
-**Agent:** Master (direct)
-
-Once the user approves, the Master writes the plan to persistent files:
+**Plan Persistence (final step of Phase 2):**
+After user approves, Master writes the plan to persistent storage:
 - `.oh-my-beads/plans/plan.md` — canonical location
 - `.oh-my-beads/plan.md` — top-level convenience copy
 
-This ensures the plan survives context compaction or session restarts.
-
-### Phase 4: Team Init & Task Breakdown
+### Phase 3: Team Init & Task Decomposition (Phase-at-a-Time)
 
 **Agent:** Architect (decomposition mode) | **beads_village:** `init()`, `add()`
 
 1. Master initializes beads_village: `init(team="oh-my-beads", leader=true)`
-2. Architect decomposes each story into beads:
+2. Architect decomposes the **current phase's stories** into beads (not the entire feature):
    - `add(title, desc, typ, pri, tags, deps)` per bead
    - Dependencies declared via `deps=["issue:bd-N"]`
-   - File scope isolation enforced
+   - File scope isolation enforced; bead conflict detection (overlapping file scopes → split, dependency, or merge)
+   - Returns `is_final_phase: true|false` indicating whether more phases remain
 3. Master verifies graph: `graph()`, `bv_insights()` (check for cycles)
 
-### Phase 5: Validation & Approval
+**For simple path:** Only one phase exists, so `is_final_phase` is always `true`.
+
+### Phase 4: Validation & Approval
 
 **Skill:** `oh-my-beads:validating`
 
-Comprehensive pre-execution verification across 5 phases:
+Configurable-depth pre-execution verification:
+
+**Lighter path** (< 5 beads): Fewer dimensions, fewer iterations, faster validation.
+**Standard/Deep** (≥ 5 beads): Full verification with all 8 dimensions.
+
+Context budget monitoring at 65% threshold — writes handoff and defers if exceeded.
 
 1. **Structural verification** — 8 dimensions (plan coherence, story coverage, decision coverage, dependency correctness, file scope isolation, context budget, verification completeness, exit-state completeness). Max 3 iterations.
 2. **Spike execution** — time-boxed investigation for HIGH-risk items. YES → embed findings. NO → full stop, replan.
 3. **Bead polishing** — graph health (`bv_insights`), priority alignment (`bv_priority`), execution tracks (`bv_plan`), deduplication, fresh-eyes bead review (subagent).
-4. **Exit-state readiness** — confirms feature will be delivered if all beads close.
+4. **Exit-state readiness** — confirms phase will be delivered if all beads close.
 5. **Approval gate (HITL Gate 3)** — structured summary + user chooses Sequential or Parallel.
 
 Reference files: `skills/validating/references/plan-checker-prompt.md`, `skills/validating/references/bead-reviewer-prompt.md`
 
-### Phase 6: Execution
+### Phase 5: Execution
 
 **Agent:** Worker(s) | **Skill:** `oh-my-beads:worker` (sequential), `oh-my-beads:swarming` (parallel)
+
+**Worker prompt persistence (HARD-GATE):** Before spawning each Worker, Master writes
+the full assignment to `.oh-my-beads/plans/worker-{bead-id}.md` for compaction recovery and audit trail.
 
 #### Sequential Mode
 ```
 For each ready bead (in dependency order):
   1. Master picks first: ls(status="ready")
-  2. Worker spawned with single bead context
-  3. Worker: claim() → reserve(paths) → implement → report
-  4. → Phase 7 review for this bead
-  5. If PASS: done(id) → next bead
-  6. If FAIL: re-spawn Worker (max 2 retries)
+  2. Master writes worker-{bead-id}.md with full assignment context
+  3. Worker spawned with single bead context
+  4. Worker: claim() → reserve(paths) → implement → best-effort verify → report
+  5. → Phase 6 review for this bead
+  6. If PASS: done(id) → next bead
+  7. If FAIL: re-spawn Worker (max 2 retries)
 ```
+
+**Worker HARD-GATE constraints:**
+- Must reserve files before editing (file scope adherence)
+- Best-effort verification only (lint/syntax on changed files) — full build+test deferred to Reviewer batch merge
+- Turn termination rules: must end with structured completion report
+- Context budget monitoring with handoff on approaching limits
 
 #### Parallel Mode (Swarming)
 
@@ -178,12 +240,15 @@ Invokes the swarming skill for orchestrated parallel execution:
 Swarming Orchestrator:
   1. Confirm readiness: ls(status="ready"), bv_insights()
   2. Spawn self-routing Worker pool (2-4 concurrent Workers)
-  3. Workers self-route: ls(status="ready") → claim() → reserve() → implement → msg() → release() → loop
+  3. Workers self-route: ls(status="ready") → claim() → reserve(paths, region_hint) → implement → msg(thread="bd-N") → release() → loop
   4. Orchestrator monitors: inbox(), reservations(), handles file conflicts
   5. Per-bead review: Reviewer spawned as each Worker completes
   6. On PASS: done(id) → unblocks dependents
   7. On FAIL: re-spawn Worker with feedback (max 2 retries)
 ```
+
+Swarming uses **shared locks with region hints** for concurrent edits to different sections
+of the same file. Messages are threaded by bead ID (`thread="bd-N"`) for organized communication.
 
 Reference files: `skills/swarming/references/worker-spawn-template.md`, `skills/swarming/references/message-templates.md`
 
@@ -193,7 +258,7 @@ Reference files: `skills/swarming/references/worker-spawn-template.md`, `skills/
 - `done(id)` — auto-release + unblock dependents
 - No advisory lock files. No git worktrees.
 
-### Phase 7: Per-Task Quality Review
+### Phase 6: Per-Task Quality Review + Batch Merge Verification
 
 **Agent:** Reviewer (review mode) | **Skill:** `oh-my-beads:reviewer`
 
@@ -213,29 +278,37 @@ Runs **per bead**, immediately after each Worker completes:
 
 **No TDD mandate.** Focus on functional review, not test coverage.
 
-### Phase 7.5: Feature-Level Full Review
+**Batch Merge Verification (HARD-GATE):** After all per-bead reviews pass, Reviewer runs
+full project-wide build+test+lint+type-check. Workers only do best-effort verification
+on their changed files — the Reviewer is responsible for comprehensive batch verification.
+If batch verification fails, the responsible bead(s) are identified and Workers re-spawned.
+
+### Phase 6.5: Feature-Level Full Review
 
 **Agent:** Reviewer (full-review mode) | **Skill:** `oh-my-beads:reviewer`
 
-After ALL per-bead reviews pass, runs 5 specialist agents for cross-cutting analysis:
+After ALL per-bead reviews and batch merge verification pass, runs **3 consolidated specialist agents** for cross-cutting analysis:
 
 | Agent | Focus | Severity |
 |-------|-------|----------|
-| Code Quality | Simplicity, DRY, error handling, type safety, decision compliance | P1-P3 |
-| Architecture | Coupling, cohesion, separation of concerns, API design, patterns | P1-P3 |
-| Security | OWASP Top 10, secrets, supply chain, misconfigs | Always P1 |
-| Test Coverage | Unit tests, edge cases, integration gaps, AC verification | P1-P3 |
+| Code+Architecture | Simplicity, DRY, error handling, type safety, coupling, cohesion, API design, patterns | P1-P3 |
+| Security+Tests | OWASP Top 10, secrets, supply chain, unit tests, edge cases, AC verification | P1-P3 |
 | Learnings Synthesizer | Cross-reference with critical-patterns.md, flag new patterns | P3 (candidates) |
 
 **Review findings become beads_village issues:**
-- **P1** (blocking) → Must fix before Phase 8. Worker re-spawned.
+- **P1** (blocking) → Must fix before Phase 7. Worker re-spawned.
 - **P2/P3** (non-blocking) → Tracked as follow-up beads.
 
 **Artifact verification (3-level):** EXISTS → SUBSTANTIVE → WIRED for all deliverables.
 
 Reference files: `skills/reviewer/references/review-agent-prompts.md`, `skills/reviewer/references/review-bead-template.md`
 
-### Phase 8: Final Summary & Compounding
+**Phase-at-a-time loop-back check:**
+After Phase 6/6.5 completes:
+- If `is_final_phase == false` → loop back to Phase 3 (Architect decomposes next phase)
+- If `is_final_phase == true` → proceed to Phase 7 (summary & compounding)
+
+### Phase 7: Final Summary & Compounding
 
 **Agent:** Master (direct) + Compounding Skill
 
@@ -243,8 +316,9 @@ Reference files: `skills/reviewer/references/review-agent-prompts.md`, `skills/r
 2. Write `.oh-my-beads/history/<feature>/WRAP-UP.md` — execution report
 3. **Invoke compounding skill** (`oh-my-beads:compounding`) for structured learning capture:
    - 4 parallel analysis agents: Pattern Extractor, Decision Analyst, Failure Analyst, Exit-State Auditor
-   - Produces `.oh-my-beads/history/learnings/YYYYMMDD-<slug>.md`
+   - Produces `.oh-my-beads/history/learnings/YYYYMMDD-<slug>.md` with domain tags
    - Promotes critical findings to `.oh-my-beads/history/learnings/critical-patterns.md`
+   - **Pruning:** When critical-patterns.md exceeds 50 entries, archives oldest 20 to `critical-patterns-archive.md`
 4. Clear session state
 
 The compounding flywheel ensures each completed feature makes the next one faster:
@@ -255,31 +329,61 @@ The compounding flywheel ensures each completed feature makes the next one faste
 
 ## Mr.Fast Workflow
 
-Mr.Fast is the lightweight mode for quick fixes and small changes. No planning, no reviewer,
-no HITL gates. Two steps: analyze, then execute.
+Mr.Fast is the lightweight mode for quick fixes and small changes. No planning, no mandatory review,
+no HITL gates. Intent classification determines the execution path.
 
-### Fast Scout Phase
+### Intent Classification
+
+The keyword-detector classifies Mr.Fast prompts into three intents:
+
+| Intent | Signals | Path |
+|--------|---------|------|
+| **Turbo** | Explicit file + line reference AND explicit approach | Single Executor, no Fast Scout, no beads_village init |
+| **Standard** | Moderate fix description without explicit file+line | Fast Scout → Executor |
+| **Complex** | Large-scope work (refactor entire, redesign, rebuild) | Suggest Mr.Beads instead (no active session) |
+
+Ambiguous prompts default to Standard (the safer path).
+
+### Turbo Path
+
+**Agent:** Executor only | **No beads_village init**
+
+For when the user provides specific file + approach (e.g., "mr.fast fix typo on line 42 of auth.ts"):
+1. Executor reads target file(s)
+2. Applies the specific change described
+3. File locking (`reserve`/`release`) used only if needed
+4. Self-verify: lint/build/test on changed files
+5. Report results
+
+### Standard Path (Fast Scout → Executor)
 
 **Agent:** Fast Scout | **Skill:** `oh-my-beads:fast-scout`
 
 The Fast Scout performs rapid codebase analysis:
 - Reads relevant files using Glob/Grep/Read
-- Identifies root cause, affected files, recommended approach
-- Asks 0-2 clarifying questions (only if truly needed)
-- Returns inline analysis summary (no CONTEXT.md)
+- HARD-GATE: asks at most 2 clarifying questions (only if truly needed)
+- HARD-GATE: never writes code
+- Red Flags: scope creep, over-analysis, writing code
+- Returns BRIEF.md with root cause, affected files, and fix plan
+
+**Agent:** Executor
+
+The Executor implements the fix:
+1. Reads BRIEF.md for the fix plan
+2. `reserve(paths)` — lock affected files via beads_village
+3. Follows fix plan step by step
+4. Self-verify: build/lint/test on changed files
+5. `release()` — unlock files
+6. Report results with file:line citations
 
 ### Execution Phase
 
-**Agent:** Executor | **Skill:** (executor agent, no dedicated skill)
-
-The Executor implements the fix:
-1. `reserve(paths)` — lock affected files via beads_village
-2. Implement changes following Fast Scout's recommended approach
-3. Self-verify: build and test
-4. `release()` — unlock files
-5. Report results
-
 **Retry:** Max 1 retry if Executor fails, then escalate to user.
+
+### Mr.Fast Resume
+
+If a Mr.Fast session is interrupted (`active=true`, `mode=mr.fast`), `session-start.mjs`
+detects the interrupted session and offers to resume on next startup.
 
 ---
 
@@ -306,8 +410,9 @@ Agent definitions live in `agents/*.md`. Each file defines the agent's role, mod
 
 | Skill | Skill File | Phase | beads_village Tools | Model |
 |-------|-----------|-------|-------------------|-------|
-| **Validating** | `skills/validating/SKILL.md` | Phase 5 | ls, show, bv_insights, bv_priority, bv_plan, graph, add, done | sonnet (subagents) |
-| **Swarming** | `skills/swarming/SKILL.md` | Phase 6 (parallel) | ls, show, done, reservations, msg, inbox, ack_message, bv_insights | sonnet (Workers) |
+| **Validating** | `skills/validating/SKILL.md` | Phase 4 | ls, show, bv_insights, bv_priority, bv_plan, graph, add, done | sonnet (subagents) |
+| **Swarming** | `skills/swarming/SKILL.md` | Phase 5 (parallel) | ls, show, done, reservations, msg, inbox, ack_message, bv_insights | sonnet (Workers) |
+| **Compounding** | `skills/compounding/SKILL.md` | Phase 7 | (none — reads/writes learnings files) | sonnet (subagents) |
 | **Debugging** | `skills/debugging/SKILL.md` | Error recovery | show, add, msg, inbox, bv_insights, reservations | sonnet |
 
 ## Context Isolation
@@ -316,11 +421,12 @@ Sub-agents receive ONLY what they need:
 
 | Agent | Receives | Does NOT Receive |
 |-------|----------|-----------------|
-| Scout | User request, feature slug | Plans, beads, code |
-| Architect | CONTEXT.md, handoffs | Scout's conversation, other agents |
-| Validating | All beads + plan + CONTEXT.md | Scout/Architect conversations |
-| Worker | Single bead description + referenced decisions | Full plan, other beads, chat history |
-| Swarming | All beads + reservations + messaging | Scout/Architect conversations, source code |
+| Scout | User request, feature slug, LEARNINGS_CONTEXT | Plans, beads, code |
+| Architect | CONTEXT.md, handoffs, LEARNINGS_CONTEXT | Scout's conversation, other agents |
+| Architect (decomposition) | plan.md, CONTEXT.md, phase scope | Scout/Architect planning conversations |
+| Validating | Current phase beads + plan + CONTEXT.md | Scout/Architect conversations |
+| Worker | Single bead (from worker-{bead-id}.md) + referenced decisions | Full plan, other beads, chat history |
+| Swarming | Current phase beads + reservations + messaging | Scout/Architect conversations, source code |
 | Reviewer | Bead details + worker output OR bead list | Full plan (review mode), chat history |
 | Reviewer (full-review) | Git diff + CONTEXT.md + plan.md + closed beads | Scout/Architect conversations, session state |
 
@@ -352,8 +458,8 @@ init(team="oh-my-beads", leader=true)    # Master initializes
 | Gate | Between | User Approves | Blocking? |
 |------|---------|--------------|-----------|
 | Gate 1 | Phase 1 → 2 | Locked decisions (CONTEXT.md) | YES |
-| Gate 2 | Phase 2 → 3 | Implementation plan (with feedback loop) | YES |
-| Gate 3 | Phase 5 → 6 | Execution mode (Sequential / Parallel) | YES |
+| Gate 2 | Phase 2 → 3 | Implementation plan (with feedback loop, max 3 revisions) | YES |
+| Gate 3 | Phase 4 → 5 | Execution mode (Sequential / Parallel) | YES |
 
 All gates are **mandatory and blocking**.
 
@@ -364,6 +470,7 @@ All gates are **mandatory and blocking**.
 | Worker fails implementation | Re-spawn with failure context (max 2 retries → invoke debugging skill → escalate) |
 | Review rejects bead | Re-spawn Worker with feedback (max 2 retries → invoke debugging skill → escalate) |
 | Full-review P1 findings | Worker re-spawned to fix → re-review (max 2 iterations → escalate) |
+| Batch merge verification fails | Identify responsible bead(s), re-spawn Worker(s), max 2 iterations → escalate |
 | Build/test failure | Invoke debugging skill (triage → reproduce → diagnose → fix → learn) |
 | beads_village error | `doctor()` → retry → if still fails, pause and report |
 | Validation fails 3 iterations | Escalate to user with failing dimensions |
@@ -372,6 +479,7 @@ All gates are **mandatory and blocking**.
 | Context budget exceeded | Write handoff, spawn fresh sub-agent |
 | Swarm orchestrator context heavy | Checkpoint + broadcast pause + handoff |
 | User cancels mid-session | Write state, clean up active beads |
+| Phase-at-a-time loop cancel | Cancel signal respected between loop iterations |
 
 ## Directory Structure
 
@@ -399,46 +507,52 @@ OhMyBeads/                              # Plugin root (git repo)
 │   └── hooks.json                      # Event-driven hooks config
 ├── scripts/                            # Hook runtime scripts
 │   ├── run.cjs                         # Hook wrapper (spawns .mjs scripts)
-│   ├── keyword-detector.mjs            # UserPromptSubmit: "omb" detection
-│   ├── session-start.mjs              # SessionStart: bootstrap + resume
-│   ├── pre-tool-enforcer.mjs          # PreToolUse: role-based access control
-│   ├── post-tool-verifier.mjs         # PostToolUse: failure detection & tracking
+│   ├── helpers.mjs                     # Shared helpers (readJson, writeJsonAtomic, hookOutput)
+│   ├── helpers.cjs                     # CJS shim of shared helpers (for persistent-mode)
+│   ├── keyword-detector.mjs            # UserPromptSubmit: "omb"/"mr.fast" detection + intent classification
+│   ├── session-start.mjs              # SessionStart: bootstrap + resume (both modes)
+│   ├── pre-tool-enforcer.mjs          # PreToolUse: role-based access control (early-returns for inactive sessions)
+│   ├── post-tool-verifier.mjs         # PostToolUse: failure detection & tracking (early-returns for inactive sessions)
 │   ├── post-tool-use-failure.mjs      # PostToolUseFailure: retry tracking & escalation
 │   ├── context-guard-stop.mjs         # Stop: context pressure detection (runs before persistent-mode)
 │   ├── persistent-mode.cjs            # Stop: autonomy engine (blocks premature stops)
 │   ├── session-end.mjs                # SessionEnd: cleanup state, deactivate sessions
 │   ├── prompt-leverage.mjs            # Prompt augmentation (imported by keyword-detector)
-│   ├── subagent-tracker.mjs           # Subagent lifecycle tracking
-│   └── verify-deliverables.mjs        # Verify subagent outputs by role
+│   ├── subagent-tracker.mjs           # SubagentStart: subagent lifecycle tracking
+│   └── subagent-stop.mjs             # SubagentStop: consolidated deliverable verification + tracking
 ├── skills/                             # All skills at plugin root
 │   ├── using-oh-my-beads/SKILL.md      # Bootstrap & entry point
-│   ├── mr-fast/SKILL.md                # Mr.Fast entry point
-│   ├── master/SKILL.md                 # Master Orchestrator (8-step)
+│   ├── mr-fast/SKILL.md                # Mr.Fast entry point (turbo/standard/complex paths)
+│   ├── master/SKILL.md                 # Master Orchestrator (7-phase, intent classification, phase-at-a-time)
 │   ├── scout/                          # Phase 1: Socratic exploration
-│   │   ├── SKILL.md
+│   │   ├── SKILL.md                    # HARD-GATE tags, Communication Standards, Red Flags
 │   │   └── references/
-│   │       └── gray-area-probes.md     # Domain-specific probe templates
-│   ├── fast-scout/SKILL.md             # Mr.Fast: Rapid analysis
-│   ├── architect/SKILL.md              # Phases 2-4: Planning & decomposition
-│   ├── worker/SKILL.md                 # Phase 6: Implementation
-│   ├── reviewer/SKILL.md              # Phase 7: Per-bead review + Phase 7.5: Full-review (5 specialist agents)
+│   │       ├── gray-area-probes.md     # Domain-specific probe templates
+│   │       └── discovery-template.md   # Structured discovery output template
+│   ├── fast-scout/SKILL.md             # Mr.Fast: Rapid analysis (HARD-GATE tags, Red Flags)
+│   ├── architect/SKILL.md              # Phase 2-3: Planning, AI-slop detection, phase-at-a-time decomposition
 │   │   └── references/
-│   │       ├── review-agent-prompts.md # 5 specialist agent prompts (code-quality, architecture, security, test-coverage, learnings)
+│   │       ├── approach-template.md    # Structured approach template
+│   │       └── phase-contract-template.md # Phase contract format
+│   ├── worker/SKILL.md                 # Phase 5: Implementation (HARD-GATE, turn termination, best-effort verify)
+│   ├── reviewer/SKILL.md              # Phase 6: Per-bead review + Phase 6.5: Full-review (3 specialist agents)
+│   │   └── references/
+│   │       ├── review-agent-prompts.md # 3 consolidated specialist prompts (Code+Architecture, Security+Tests, Learnings)
 │   │       └── review-bead-template.md # Review finding bead format (P1/P2/P3)
-│   ├── validating/                     # Phase 5: Pre-execution verification
-│   │   ├── SKILL.md
+│   ├── validating/                     # Phase 4: Pre-execution verification (configurable depth)
+│   │   ├── SKILL.md                    # HARD-GATE, lighter path for <5 beads, 65% context budget
 │   │   └── references/
 │   │       ├── plan-checker-prompt.md  # 8-dimension structural checker
 │   │       └── bead-reviewer-prompt.md # Fresh-eyes bead quality review
-│   ├── swarming/                       # Phase 6: Parallel execution orchestration
-│   │   ├── SKILL.md
+│   ├── swarming/                       # Phase 5: Parallel execution (shared locks, region hints)
+│   │   ├── SKILL.md                    # HARD-GATE on concurrency safety
 │   │   └── references/
-│   │       ├── worker-spawn-template.md # Self-routing Worker spawn template
-│   │       └── message-templates.md    # beads_village messaging formats
-│   ├── compounding/                    # Phase 8: Learning flywheel
-│   │   ├── SKILL.md
+│   │       ├── worker-spawn-template.md # Self-routing Worker spawn template (region hints)
+│   │       └── message-templates.md    # beads_village messaging formats (thread parameter)
+│   ├── compounding/                    # Phase 7: Learning flywheel (pruning, domain tags)
+│   │   ├── SKILL.md                    # HARD-GATE, pruning at >50 entries, archive oldest 20
 │   │   └── references/
-│   │       ├── learnings-template.md   # YAML template for learnings files
+│   │       ├── learnings-template.md   # YAML template with domain tags
 │   │       └── learnings-retrieval-protocol.md # 5-step protocol for consuming learnings
 │   ├── debugging/SKILL.md              # Systematic debugging (triage → reproduce → diagnose → fix → learn)
 │   ├── prompt-leverage/                # Automatic prompt enhancement

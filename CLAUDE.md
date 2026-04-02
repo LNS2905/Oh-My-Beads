@@ -6,8 +6,8 @@
 ## Project Overview
 
 Oh-My-Beads (OMB) is a Claude Code plugin with two execution modes:
-- **Mr.Beads** — autonomous 8-step workflow with 3 HITL gates for complex features
-- **Mr.Fast** — lightweight 2-step workflow (Scout → Executor) for quick fixes
+- **Mr.Beads** — autonomous 7-phase workflow with intent classification, 3 HITL gates, phase-at-a-time decomposition, and consolidated reviews for complex features
+- **Mr.Fast** — lightweight tiered workflow with 3 paths: turbo (single Executor), standard (Fast Scout → Executor), complex (suggest Mr.Beads)
 
 Both modes use **beads_village** MCP for task tracking, dependency management, and file locking.
 
@@ -15,46 +15,75 @@ Both modes use **beads_village** MCP for task tracking, dependency management, a
 Verifier, Code Reviewer, Security Reviewer, Test Engineer.
 
 **Skills**: using-oh-my-beads (Mr.Beads bootstrap), mr-fast (Mr.Fast bootstrap),
-master, scout, fast-scout, architect, worker, reviewer, compounding, prompt-leverage, cancel, doctor.
+master, scout, fast-scout, architect, worker, reviewer, validating, swarming, compounding,
+debugging, prompt-leverage, cancel, doctor.
 
 ## Architecture
 
 ```
-User → keyword-detector (hook) → mode routing:
-  "omb"/"mr.beads" → Mr.Beads bootstrap → Master skill (8-step)
-  "mr.fast"        → Mr.Fast bootstrap → Fast Scout → Executor
+User → keyword-detector (hook) → intent classification → mode routing:
 
-Mr.Beads:
-  Master → Scout (Phase 1) → HITL Gate 1
-         → Architect (Phase 2) → HITL Gate 2
-         → Plan persistence (Phase 3)
-         → Architect decomposition (Phase 4)
-         → Reviewer validation (Phase 5) → HITL Gate 3
-         → Worker execution + Reviewer review loop (Phase 6-7)
-         → Final summary (Phase 8)
+  "omb"/"mr.beads" → Mr.Beads bootstrap → Master skill (7-phase)
+    Master classifies intent:
+      Trivial → suggest Mr.Fast and stop
+      Simple  → compressed path (skip Scout, inline plan)
+      Complex → full 7-phase flow
 
-Mr.Fast:
-  Fast Scout (0-2 questions) → Executor (reserve → implement → verify → release)
+  "mr.fast" → keyword-detector classifies intent:
+    Turbo    → Mr.Fast bootstrap → Executor only (no Fast Scout, no beads_village init)
+    Standard → Mr.Fast bootstrap → Fast Scout → Executor (self-verifies)
+    Complex  → suggest Mr.Beads instead (no active session)
+
+Mr.Beads (full flow, phase-at-a-time):
+  Phase 0: Load learnings
+  → Scout (Phase 1) → HITL Gate 1
+  → Architect planning + plan persistence (Phase 2) → HITL Gate 2
+  → Architect decomposition for current phase (Phase 3)
+  → Validation (Phase 4) → HITL Gate 3
+  → Worker execution (Phase 5) + Reviewer review (Phase 6/6.5)
+  → [loop back to Phase 3 if not final phase]
+  → Final summary + compounding (Phase 7)
+
+Mr.Fast (turbo path):
+  Executor (read → edit → verify → report)
+
+Mr.Fast (standard path):
+  Fast Scout (0-2 questions) → Executor (reserve → implement → self-verify → release)
 ```
 
 ### Key Directories
 
-- `scripts/` — Hook scripts (Node.js, `.mjs`/`.cjs`)
+- `scripts/` — Hook scripts (Node.js, `.mjs`/`.cjs`) + shared helpers (`helpers.mjs`/`helpers.cjs`)
 - `scripts/state-tools/` — State bridge CLI + shared state resolver (`resolve-state-dir.mjs`)
 - `agents/` — Agent role definitions (12 agents)
-- `skills/` — Skill definitions (12 skills, including compounding + prompt-leverage)
+- `skills/` — Skill definitions (15 skills, including validating, swarming, compounding, debugging, prompt-leverage)
 - `hooks/` — Hook configuration (`hooks.json`)
-- `.oh-my-beads/state/` — Runtime session state (not committed)
-- `test/` — Test harness (136 tests)
+- `test/` — Test harness
 
-### State Model
+### State Model (Hybrid)
 
-Session state lives in `.oh-my-beads/state/session.json`:
+OMB uses a **hybrid state model** — runtime state at system-level, project artifacts at project-level:
+
+| Type | Location | Committed? |
+|------|----------|-----------|
+| Runtime state | `~/.oh-my-beads/projects/{hash}/` | No |
+| Session-scoped | `~/.oh-my-beads/projects/{hash}/sessions/{sessionId}/` | No |
+| Handoffs | `~/.oh-my-beads/projects/{hash}/handoffs/` | No |
+| Plans | `{cwd}/.oh-my-beads/plans/` | Yes |
+| History/learnings | `{cwd}/.oh-my-beads/history/` | Yes |
+
+`{hash}` = 8-char SHA-256 of the project's absolute path (deterministic).
+
+Users do **not** need to run `setup omb` per project — the SessionStart hook auto-creates
+all required directories. Plans and history are committed to the project repo.
+
+Session state structure (at system-level):
 
 ```json
 {
   "active": true,
   "mode": "mr.beads",
+  "intent": "complex",
   "current_phase": "phase_2_planning",
   "started_at": "2025-01-01T00:00:00.000Z",
   "last_checked_at": "2025-01-01T00:01:00.000Z",
@@ -67,6 +96,7 @@ Session state lives in `.oh-my-beads/state/session.json`:
 
 **Canonical field names** (use these, not alternatives):
 - `mode` ("mr.beads" | "mr.fast", defaults to "mr.beads" if absent)
+- `intent` (Mr.Beads: "trivial" | "simple" | "complex"; Mr.Fast: "turbo" | "standard" | "complex")
 - `current_phase` (not `phase`)
 - `started_at` (not `startedAt`)
 - `cancelled_at` (not `cancelledAt`)
@@ -74,24 +104,30 @@ Session state lives in `.oh-my-beads/state/session.json`:
 - `reinforcement_count` (not `reinforcementCount`)
 - `revision_count` (Phase 2 revision tracking, max 3, not `revisionCount`)
 
-Additional state files:
+Additional state files (system-level):
 - `tool-tracking.json` — files modified, failures detected by PostToolUse hook
 - `subagent-tracking.json` — spawned subagent lifecycle (role, start/stop, status)
 - `checkpoint.json` — pre-compaction checkpoint for context recovery
 - `last-tool-error.json` — last tool failure, retry count, escalation state (PostToolUseFailure hook)
 - `cancel-signal.json` — cancel signal with 30s TTL (prevents TOCTOU race on cancel)
 
-### Session-Scoped State
-
-State supports session-scoped paths for multi-session isolation:
-```
-.oh-my-beads/state/session.json                        (legacy, primary)
-.oh-my-beads/state/sessions/{sessionId}/session.json    (session-scoped)
-```
+### State Path Resolution
 
 All hooks use `resolveStateDir(baseDir, data)` from `scripts/state-tools/resolve-state-dir.mjs` (ESM)
-or inline equivalent (CJS) to resolve the correct path. Session ID is read from `data.session_id`,
-`data.sessionId`, or `CLAUDE_SESSION_ID` env var. Falls back to legacy path when unavailable.
+or inline equivalent (CJS) to resolve the correct path. Key helpers:
+
+| Helper | Returns |
+|--------|---------|
+| `getSystemRoot()` | `~/.oh-my-beads/` (or `$OMB_HOME`) |
+| `getProjectStateRoot(cwd)` | `~/.oh-my-beads/projects/{hash}/` |
+| `getArtifactsDir(cwd)` | `{cwd}/.oh-my-beads/` |
+| `resolveStateDir(cwd, data)` | `{ stateDir, sessionId, legacyDir, projectRoot }` |
+| `resolveHandoffsDir(cwd)` | `~/.oh-my-beads/projects/{hash}/handoffs/` |
+| `ensureRuntimeDirs(cwd, sid)` | Auto-creates system-level dirs |
+| `ensureArtifactDirs(cwd)` | Auto-creates project-level plans/ and history/ |
+
+**Legacy migration**: if state exists at `{cwd}/.oh-my-beads/state/` but not at system-level,
+it is read from the legacy path. New writes always go to system-level.
 
 Use the state bridge CLI for uniform access:
 ```bash
@@ -106,16 +142,16 @@ node scripts/state-tools/state-bridge.cjs status [--session-id ID]
 
 | Hook | Script | Timeout | Purpose |
 |------|--------|---------|---------|
-| UserPromptSubmit | keyword-detector.mjs | 5s | Detect "omb"/"mr.fast"/"mr.beads", route to mode |
-| SessionStart | session-start.mjs | 5s | Banner, resume detection, post-compaction auto-resume |
-| PreToolUse | pre-tool-enforcer.mjs | 3s | Role-based tool access (engine-level blocking) + Bash safety |
-| PostToolUse | post-tool-verifier.mjs | 5s | Failure detection, file tracking |
+| UserPromptSubmit | keyword-detector.mjs | 5s | Detect "omb"/"mr.fast"/"mr.beads", classify Mr.Fast intent (turbo/standard/complex), route to mode |
+| SessionStart | session-start.mjs | 5s | Banner, resume detection (both modes), post-compaction auto-resume |
+| PreToolUse | pre-tool-enforcer.mjs | 3s | Role-based tool access (engine-level blocking) + Bash safety. Early-returns for inactive sessions. |
+| PostToolUse | post-tool-verifier.mjs | 5s | Failure detection, file tracking, output clipping. Early-returns for inactive sessions. |
 | PostToolUseFailure | post-tool-use-failure.mjs | 3s | Track tool failures, retry counts, escalation at 5 retries |
 | Stop | context-guard-stop.mjs | 3s | Detect context pressure, allow context-limit stops through |
 | Stop | persistent-mode.cjs | 5s | Block premature stops, write checkpoints |
 | PreCompact | pre-compact.mjs | 5s | Save checkpoint + handoff before compaction |
 | SubagentStart | subagent-tracker.mjs | 3s | Track subagent lifecycle (role, start time) |
-| SubagentStop | subagent-tracker.mjs, verify-deliverables.mjs | 5s | Verify deliverables, update tracking state |
+| SubagentStop | subagent-stop.mjs | 5s | Consolidated: verify deliverables + update tracking state |
 | SessionEnd | session-end.mjs | 30s | Clean up state, mark stale sessions, clear transient files |
 
 ### Safety Mechanisms
@@ -142,12 +178,21 @@ node scripts/state-tools/state-bridge.cjs status [--session-id ID]
 | **Worker guard** | OMB_AGENT_ROLE / OMB_TEAM_WORKER env check | Prevents subagent keyword re-triggers (spawn loops) |
 | **Output clipping** | MAX_OUTPUT_CHARS (12k default) | Limits large tool outputs, annotates truncation |
 | **Session-scoped state** | resolveStateDir() helper | Multi-session isolation via sessions/{id}/ paths |
+| **Hybrid state model** | system-level + project-level | Runtime at ~/.oh-my-beads/, artifacts at {cwd}/.oh-my-beads/ |
+| **Auto-initialization** | session-start.mjs ensureRuntimeDirs | No manual setup needed per project |
+| **Prerequisite checks** | session-start.mjs | Warns if Node < 18 or beads-village missing |
+| **Inactive session early-return** | pre-tool-enforcer, post-tool-verifier | Hooks return immediately when no active session → lower overhead |
+| **OMB_QUIET levels** | OMB_QUIET env var (0/1/2) | Controls hook output verbosity (0=normal, 1=warnings+errors, 2=errors only) |
+| **Intent classification** | keyword-detector.mjs (Mr.Fast), Master skill (Mr.Beads) | Routes tasks to appropriate complexity path |
+| **Mode conflict prevention** | keyword-detector.mjs | Blocks "mr.fast" during active Mr.Beads session (and vice versa) |
+| **HARD-GATE enforcement** | `<HARD-GATE>` tags in all execution skills | Non-negotiable behavioral constraints in Worker, Reviewer, Swarming, Compounding, Validating |
+| **Phase-at-a-time decomposition** | Architect + Master loop | Only current phase beads exist, preventing scope sprawl |
 
 ### Agent Role Matrix
 
 | Agent | Write | Edit | Agent | beads_village mutations | Notes |
 |-------|-------|------|-------|------------------------|-------|
-| Master | .oh-my-beads/ only | NO | YES | init/ls/show/done/assign/graph/bv_plan/bv_insights/reservations/doctor/msg/inbox | Never writes code |
+| Master | YES | YES | YES | init/ls/show/done/assign/graph/bv_plan/bv_insights/reservations/doctor/msg/inbox | Prefers delegating to sub-agents |
 | Scout | CONTEXT.md only | NO | NO | none | Read-only exploration (Mr.Beads) |
 | Fast Scout | BRIEF.md only | NO | NO | none | Rapid analysis, writes BRIEF.md (Mr.Fast) |
 | Architect | plans/ only | NO | NO | add (via Master) | Plans only |
@@ -174,7 +219,7 @@ node scripts/state-tools/state-bridge.cjs status [--session-id ID]
 
 Run tests: `node test/run-tests.mjs`
 
-136 tests across 22 suites covering:
+258 tests across 35+ suites covering:
 - keyword-detector (10 tests): keyword detection, informational filtering (±80 char window), cancel with signal file, CC prompt field
 - persistent-mode (15 tests): block/allow, circuit breaker, staleness, CC-format stop hook, cancel signal TTL, awaiting_confirmation
 - post-tool-verifier (8 tests): failure detection (word-boundary patterns), file tracking, counters
@@ -197,12 +242,27 @@ Run tests: `node test/run-tests.mjs`
 - keyword-detector Worker Guard (3 tests): OMB_AGENT_ROLE skip, OMB_TEAM_WORKER skip, normal detection
 - post-tool-verifier Output Clipping (3 tests): clipping >12k, passthrough <12k, env override
 - post-tool-verifier Session-Scoped State (2 tests): session_id scoped path, legacy fallback
+- statusline HUD (21 tests): idle/active display, mode colors, context bar with thresholds, session duration, agents, beads progress, files count, ANSI colors, non-breaking spaces
+- shared helpers (5 tests): readJson valid/invalid/missing, writeJsonAtomic, hookOutput
+- system-level-only writes (3 tests): state writes to system path, no legacy writes
+- inactive-session optimization (2 tests): pre-tool-enforcer and post-tool-verifier early-return
+- consolidated SubagentStop (3 tests): tracking, deliverable verification by role
+- quiet levels (4 tests): OMB_QUIET=0/1/2 across hooks
+- Mr.Fast intent classification (12 tests): turbo/standard/complex detection, session state, ambiguous defaults
+- prompt-leverage Light cap (2 tests): mr.fast Light intensity, shorter output
+- persistent-mode turbo (1 test): fast_turbo phase blocking
+- statusline turbo (1 test): fast_turbo display
+- mode conflict prevention (2 tests): mr.fast during active mr.beads and vice versa
+- Mr.Fast resume (1 test): session-start resumes interrupted mr.fast
+- phase renumbering (10 tests): new phase names in persistent-mode, statusline, session-end
+- backward compatibility (4 tests): missing intent field across hooks
+- cancel during phase-at-a-time (6 tests): cancel at various loop stages
 
 ### Adding a New Agent
 
 1. Create `agents/<role>.md` with frontmatter: `name`, `description`, `model`, `level`, `disallowedTools`
 2. Add role restrictions to `scripts/pre-tool-enforcer.mjs` ROLE_RESTRICTIONS
-3. Add expected deliverables to `scripts/subagent-tracker.mjs` ROLE_DELIVERABLES
+3. Add expected deliverables to `scripts/subagent-stop.mjs` ROLE_DELIVERABLES
 4. Update AGENTS.md agent table
 5. Add tests in `test/run-tests.mjs`
 
@@ -224,15 +284,19 @@ Run tests: `node test/run-tests.mjs`
 - Snake_case for JSON state fields
 - camelCase for JavaScript variables
 - Agents use Markdown frontmatter format
-- Skills use SKILL.md with frontmatter
+- Skills use SKILL.md with frontmatter; critical constraints wrapped in `<HARD-GATE>` tags
+- Shared helpers in `scripts/helpers.mjs` (ESM) and `scripts/helpers.cjs` (CJS shim)
 - All hook outputs: `{ continue: true, hookSpecificOutput: { hookEventName, additionalContext? } }`
 - Stop hook uses `{ decision: "block", reason }` to prevent stops
-- Never commit `.oh-my-beads/state/` contents (runtime only)
+- Never commit `.oh-my-beads/state/` contents (runtime state is at system-level now)
+- Runtime state lives at `~/.oh-my-beads/projects/{hash}/` — never in the project repo
+- Project artifacts (plans, history) live at `{cwd}/.oh-my-beads/` — committed to repo
+- `OMB_QUIET` env var controls hook output verbosity (0=default, 1=reduced, 2=errors only)
 
 ## Commands
 
 ```bash
-# Run tests (136 tests, all must pass)
+# Run tests (258 tests, all must pass)
 node test/run-tests.mjs
 
 # Manual keyword test
@@ -248,8 +312,8 @@ node scripts/state-tools/state-bridge.cjs list
 node scripts/state-tools/state-bridge.cjs status
 node scripts/state-tools/state-bridge.cjs clear
 
-# Check session state directly
-cat .oh-my-beads/state/session.json
+# Check session state directly (system-level)
+cat ~/.oh-my-beads/projects/$(echo -n "$(pwd)" | sha256sum | cut -c1-8)/session.json
 ```
 
 ## Dependencies

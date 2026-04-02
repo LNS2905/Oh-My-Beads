@@ -13,8 +13,9 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, readdirSync } from "fs";
 import { join, dirname } from "path";
-import { resolveStateDir, resolveHandoffsDir } from "./state-tools/resolve-state-dir.mjs";
+import { resolveStateDir, resolveHandoffsDir, getProjectStateRoot } from "./state-tools/resolve-state-dir.mjs";
 import { readJson, writeJsonAtomic, hookOutput as _hookOutput } from "./helpers.mjs";
+import { loadMemory, formatSummary } from "./project-memory.mjs";
 
 // --- Helpers ---
 function writeTextFile(path, content) {
@@ -131,6 +132,17 @@ process.stdin.on("end", () => {
     mode === "mr.beads" ? `Check beads_village ls(status="ready") for next work.` : `Continue the Mr.Fast workflow.`,
   ].filter(Boolean).join("\n");
 
+  // 4b. Append project memory summary so it survives compaction
+  let finalSystemMsg = systemMsg;
+  try {
+    const projectStateRoot = getProjectStateRoot(directory);
+    const memory = loadMemory(projectStateRoot);
+    const memorySummary = formatSummary(memory, 650);
+    if (memorySummary) {
+      finalSystemMsg += `\n\n# Project Memory (Post-Compaction Recovery)\n${memorySummary}`;
+    }
+  } catch { /* best effort */ }
+
   // 5. Emit context so Claude knows about the checkpoint
   hookOutput(
     `[oh-my-beads] Pre-compaction checkpoint saved.\n` +
@@ -138,6 +150,6 @@ process.stdin.on("end", () => {
     `Files modified: ${filesModified.length} | Active subagents: ${activeAgents.length}\n` +
     `Handoff written to .oh-my-beads/handoffs/\n` +
     `After compaction, read the handoff to resume.`,
-    systemMsg
+    finalSystemMsg
   );
 });

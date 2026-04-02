@@ -17,8 +17,9 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "fs";
 import { join, dirname } from "path";
-import { resolveStateDir } from "./state-tools/resolve-state-dir.mjs";
+import { resolveStateDir, getProjectStateRoot } from "./state-tools/resolve-state-dir.mjs";
 import { readJson, writeJsonAtomic, hookOutput as _hookOutput, getQuietLevel } from "./helpers.mjs";
+import { loadMemory, saveMemory, addHotPath } from "./project-memory.mjs";
 
 // --- Constants ---
 const MAX_OUTPUT_CHARS = parseInt(process.env.OMB_MAX_OUTPUT_CHARS || "12000", 10);
@@ -37,7 +38,9 @@ const FAILURE_KEYWORDS = [
 ];
 
 const CODE_TOOLS = new Set(["Write", "Edit"]);
+const HOT_PATH_TOOLS = new Set(["Read", "Edit", "Write", "MultiEdit"]);
 const BASH_TOOL = "Bash";
+const MEMORY_SAVE_INTERVAL = 10; // Save project memory every N tool calls
 
 // --- Helpers ---
 const hookOutput = (additionalContext) => {
@@ -151,6 +154,48 @@ process.stdin.on("end", async () => {
     mkdirSync(stateDir, { recursive: true });
     writeJsonAtomic(trackingFile, tracking);
   } catch { /* best effort */ }
+
+  // --- Project Memory: hot path tracking + command learning ---
+  // Throttled: only save to disk every MEMORY_SAVE_INTERVAL tool calls
+  try {
+    const projectStateRoot = getProjectStateRoot(directory);
+    let memory = loadMemory(projectStateRoot);
+    let memoryDirty = false;
+
+    // Track hot paths for file-access tools (Read/Edit/Write/MultiEdit)
+    if (HOT_PATH_TOOLS.has(toolName)) {
+      const filePath = extractFilePath(data);
+      if (filePath) {
+        addHotPath(memory, filePath, "file");
+        memoryDirty = true;
+      }
+    }
+
+    // Learn build/test commands from Bash output
+    if (toolName === BASH_TOOL && toolResult) {
+      const bashInput = data.tool_input?.command ?? data.toolInput?.command ?? "";
+      if (!memory.build) memory.build = { test: "", build: "", lint: "", dev: "", scripts: {} };
+      // Detect common build/test command patterns running successfully (no failure detected)
+      if (bashInput && !failureDetected) {
+        const cmdLearners = [
+          { pattern: /\b(?:npm\s+test|yarn\s+test|pnpm\s+test|jest|vitest|pytest|cargo\s+test|go\s+test|mocha)\b/i, field: "test" },
+          { pattern: /\b(?:npm\s+run\s+build|yarn\s+build|pnpm\s+build|cargo\s+build|go\s+build|tsc)\b/i, field: "build" },
+          { pattern: /\b(?:npm\s+run\s+lint|yarn\s+lint|pnpm\s+lint|eslint|cargo\s+clippy|golangci-lint)\b/i, field: "lint" },
+        ];
+        for (const { pattern, field } of cmdLearners) {
+          if (pattern.test(bashInput) && !memory.build[field]) {
+            memory.build[field] = bashInput.trim();
+            memoryDirty = true;
+          }
+        }
+      }
+    }
+
+    // Save memory (throttled to max once per MEMORY_SAVE_INTERVAL tool calls)
+    if (memoryDirty && tracking.tool_count % MEMORY_SAVE_INTERVAL === 0) {
+      saveMemory(projectStateRoot, memory);
+    }
+  } catch { /* best effort — don't block tool use */ }
 
   // Generate advisory context if failure detected
   // Failure messages are warnings — suppressed at quiet level 2

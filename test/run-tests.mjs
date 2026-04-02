@@ -3501,6 +3501,185 @@ test("rescan preserves customNotes, hotPaths, userDirectives", () => {
   rmSync(mockDir, { recursive: true, force: true });
 });
 
+// ---- PROJECT MEMORY HOOKS INTEGRATION ----
+
+console.log("\n=== Project Memory — session-start integration ===\n");
+
+test("session-start injects project memory summary when memory exists", () => {
+  resetState();
+  // Create project memory at state dir
+  const memoryData = {
+    version: 1,
+    lastScanned: Date.now(),
+    techStack: { languages: ["JavaScript", "TypeScript"], frameworks: ["React"], pkgManager: "npm", runtime: "node" },
+    build: { test: "npm test", build: "npm run build", lint: "npm run lint", dev: "", scripts: {} },
+    customNotes: [],
+    hotPaths: [{ path: "src/app.ts", accessCount: 5, lastAccessed: Date.now(), type: "file" }],
+    userDirectives: [],
+  };
+  writeFileSync(join(STATE_DIR, "project-memory.json"), JSON.stringify(memoryData, null, 2));
+
+  const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "startup" });
+  const parsed = parseOutput(output);
+  assert(parsed, "output should be valid JSON");
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "[Project Memory]", "should include project memory header");
+  assertContains(ctx, "[Environment]", "should include environment section");
+});
+
+test("session-start runs rescan when memory is stale (>24h)", () => {
+  resetState();
+  // Create stale memory (lastScanned > 24h ago)
+  const staleMemory = {
+    version: 1,
+    lastScanned: Date.now() - 25 * 60 * 60 * 1000,
+    techStack: { languages: [], frameworks: [], pkgManager: "", runtime: "" },
+    build: { test: "", build: "", lint: "", dev: "", scripts: {} },
+    customNotes: [],
+    hotPaths: [],
+    userDirectives: [{ timestamp: new Date().toISOString(), directive: "use tabs", priority: "high" }],
+  };
+  writeFileSync(join(STATE_DIR, "project-memory.json"), JSON.stringify(staleMemory, null, 2));
+  // Create package.json in TEMP_DIR so detectProjectEnv finds something
+  writeFileSync(join(TEMP_DIR, "package.json"), JSON.stringify({ name: "test-app", scripts: { test: "jest" } }));
+
+  const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "startup" });
+  const parsed = parseOutput(output);
+  assert(parsed, "output should be valid JSON");
+
+  // After rescan, memory should be updated with detected env
+  const updatedMemory = JSON.parse(readFileSync(join(STATE_DIR, "project-memory.json"), "utf8"));
+  assert(updatedMemory.lastScanned > staleMemory.lastScanned, "lastScanned should be updated");
+  assert(updatedMemory.techStack.languages.includes("JavaScript"), "should detect JavaScript after rescan");
+  // Directives should be preserved across rescan
+  assert(updatedMemory.userDirectives.length === 1, "directives should be preserved");
+  assert(updatedMemory.userDirectives[0].directive === "use tabs", "directive content preserved");
+
+  // Clean up
+  rmSync(join(TEMP_DIR, "package.json"), { force: true });
+});
+
+console.log("\n=== Project Memory — post-tool-verifier hot paths ===\n");
+
+test("post-tool-verifier tracks hot paths on Read tool", () => {
+  resetState();
+  writeState({ active: true, mode: "mr.beads", current_phase: "phase_5_execution", started_at: new Date().toISOString(), reinforcement_count: 0 });
+  // Initialize empty project memory
+  const emptyMemory = {
+    version: 1, lastScanned: Date.now(),
+    techStack: { languages: [], frameworks: [], pkgManager: "", runtime: "" },
+    build: { test: "", build: "", lint: "", dev: "", scripts: {} },
+    customNotes: [], hotPaths: [], userDirectives: [],
+  };
+  writeFileSync(join(STATE_DIR, "project-memory.json"), JSON.stringify(emptyMemory, null, 2));
+
+  // Simulate 10 Read tool calls (to trigger memory save at tool_count % 10 === 0)
+  for (let i = 0; i < 10; i++) {
+    runScript("post-tool-verifier.mjs", {
+      cwd: TEMP_DIR,
+      tool_name: "Read",
+      tool_input: { file_path: "src/app.ts" },
+      tool_output: "file contents...",
+    });
+  }
+
+  // Check that project memory has the hot path
+  const updatedMemory = JSON.parse(readFileSync(join(STATE_DIR, "project-memory.json"), "utf8"));
+  const hotPath = updatedMemory.hotPaths.find(p => p.path === "src/app.ts");
+  assert(hotPath, "should have hot path for src/app.ts");
+  assert(hotPath.accessCount >= 1, `accessCount should be >= 1, got ${hotPath.accessCount}`);
+});
+
+test("post-tool-verifier tracks hot paths on Edit/Write/MultiEdit tools", () => {
+  resetState();
+  writeState({ active: true, mode: "mr.beads", current_phase: "phase_5_execution", started_at: new Date().toISOString(), reinforcement_count: 0 });
+  const emptyMemory = {
+    version: 1, lastScanned: Date.now(),
+    techStack: { languages: [], frameworks: [], pkgManager: "", runtime: "" },
+    build: { test: "", build: "", lint: "", dev: "", scripts: {} },
+    customNotes: [], hotPaths: [], userDirectives: [],
+  };
+  writeFileSync(join(STATE_DIR, "project-memory.json"), JSON.stringify(emptyMemory, null, 2));
+
+  // Call various tools to reach 10 (the save threshold)
+  const tools = ["Edit", "Write", "MultiEdit", "Edit", "Write", "MultiEdit", "Edit", "Write", "MultiEdit", "Edit"];
+  for (let i = 0; i < tools.length; i++) {
+    runScript("post-tool-verifier.mjs", {
+      cwd: TEMP_DIR,
+      tool_name: tools[i],
+      tool_input: { file_path: `src/file-${i % 3}.ts` },
+      tool_output: "ok",
+    });
+  }
+
+  const updatedMemory = JSON.parse(readFileSync(join(STATE_DIR, "project-memory.json"), "utf8"));
+  assert(updatedMemory.hotPaths.length >= 1, "should have at least one hot path tracked");
+});
+
+console.log("\n=== Project Memory — pre-compact includes memory ===\n");
+
+test("pre-compact adds project memory summary to systemMessage", () => {
+  resetState();
+  writeState({ active: true, mode: "mr.beads", current_phase: "phase_5_execution", feature_slug: "test-feature", started_at: new Date().toISOString(), reinforcement_count: 2, failure_count: 0 });
+  // Write project memory with useful content
+  const memoryData = {
+    version: 1,
+    lastScanned: Date.now(),
+    techStack: { languages: ["TypeScript"], frameworks: ["Express"], pkgManager: "npm", runtime: "node" },
+    build: { test: "npm test", build: "", lint: "", dev: "", scripts: {} },
+    customNotes: [],
+    hotPaths: [{ path: "src/index.ts", accessCount: 10, lastAccessed: Date.now(), type: "file" }],
+    userDirectives: [],
+  };
+  writeFileSync(join(STATE_DIR, "project-memory.json"), JSON.stringify(memoryData, null, 2));
+
+  const { output } = runScript("pre-compact.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed, "output should be valid JSON");
+  assert(parsed.systemMessage, "should have systemMessage");
+  assertContains(parsed.systemMessage, "Project Memory (Post-Compaction Recovery)", "systemMessage should contain project memory");
+  assertContains(parsed.systemMessage, "[Environment]", "systemMessage should contain environment info");
+});
+
+console.log("\n=== Project Memory — directive detection ===\n");
+
+test("keyword-detector detects 'always use' directive", () => {
+  resetState();
+  // Initialize project memory
+  const emptyMemory = {
+    version: 1, lastScanned: Date.now(),
+    techStack: { languages: [], frameworks: [], pkgManager: "", runtime: "" },
+    build: { test: "", build: "", lint: "", dev: "", scripts: {} },
+    customNotes: [], hotPaths: [], userDirectives: [],
+  };
+  writeFileSync(join(STATE_DIR, "project-memory.json"), JSON.stringify(emptyMemory, null, 2));
+
+  runScript("keyword-detector.mjs", { query: "always use TypeScript strict mode in this project" });
+
+  const updatedMemory = JSON.parse(readFileSync(join(STATE_DIR, "project-memory.json"), "utf8"));
+  assert(updatedMemory.userDirectives.length >= 1, `should have at least 1 directive, got ${updatedMemory.userDirectives.length}`);
+  const directive = updatedMemory.userDirectives[0];
+  assertContains(directive.directive.toLowerCase(), "always use", "directive should contain 'always use'");
+});
+
+test("keyword-detector detects 'never modify' directive", () => {
+  resetState();
+  const emptyMemory = {
+    version: 1, lastScanned: Date.now(),
+    techStack: { languages: [], frameworks: [], pkgManager: "", runtime: "" },
+    build: { test: "", build: "", lint: "", dev: "", scripts: {} },
+    customNotes: [], hotPaths: [], userDirectives: [],
+  };
+  writeFileSync(join(STATE_DIR, "project-memory.json"), JSON.stringify(emptyMemory, null, 2));
+
+  runScript("keyword-detector.mjs", { query: "never modify the database schema directly" });
+
+  const updatedMemory = JSON.parse(readFileSync(join(STATE_DIR, "project-memory.json"), "utf8"));
+  assert(updatedMemory.userDirectives.length >= 1, `should have at least 1 directive, got ${updatedMemory.userDirectives.length}`);
+  const directive = updatedMemory.userDirectives[0];
+  assertContains(directive.directive.toLowerCase(), "never modify", "directive should contain 'never modify'");
+});
+
 // ============================================================
 // SUMMARY
 // ============================================================

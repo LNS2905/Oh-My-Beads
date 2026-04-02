@@ -14,6 +14,7 @@ import { fileURLToPath } from "url";
 import { upgradePrompt } from "./prompt-leverage.mjs";
 import { getProjectStateRoot, ensureDir } from "./state-tools/resolve-state-dir.mjs";
 import { hookOutput as _hookOutput, getQuietLevel } from "./helpers.mjs";
+import { loadMemory, saveMemory, addDirective } from "./project-memory.mjs";
 
 // --- Config ---
 const KEYWORDS = [
@@ -151,6 +152,64 @@ function classifyFastIntent(rawPrompt) {
   return "standard";
 }
 
+// --- User Directive Detection ---
+
+/**
+ * Detect user directives in prompts like "always use X", "never modify Y", "prefer Z over W".
+ * Simple regex-based detection — not ML.
+ */
+const DIRECTIVE_PATTERNS = [
+  /\balways\s+(?:use|prefer|run|include|add|keep|check)\s+(.+?)(?:\.|$)/i,
+  /\bnever\s+(?:modify|change|delete|remove|touch|edit|use)\s+(.+?)(?:\.|$)/i,
+  /\bprefer\s+(.+?)\s+over\s+(.+?)(?:\.|$)/i,
+  /\bdon'?t\s+(?:ever\s+)?(?:modify|change|delete|remove|touch|edit|use)\s+(.+?)(?:\.|$)/i,
+  /\bmake\s+sure\s+(?:to\s+)?always\s+(.+?)(?:\.|$)/i,
+];
+
+/**
+ * Extract user directives from a raw prompt. Returns array of directive strings.
+ * @param {string} rawPrompt
+ * @returns {string[]}
+ */
+export function extractDirectives(rawPrompt) {
+  const directives = [];
+  for (const pattern of DIRECTIVE_PATTERNS) {
+    const match = rawPrompt.match(pattern);
+    if (match) {
+      // Use the full matched phrase as the directive (trim trailing punctuation)
+      const directive = match[0].replace(/\.\s*$/, "").trim();
+      if (directive.length >= 5 && directive.length <= 200) {
+        directives.push(directive);
+      }
+    }
+  }
+  return directives;
+}
+
+/**
+ * Detect and save user directives found in a prompt to project memory.
+ * @param {string} rawPrompt
+ */
+function detectAndSaveDirectives(rawPrompt) {
+  try {
+    const directives = extractDirectives(rawPrompt);
+    if (directives.length === 0) return;
+
+    const stateDir = getStateDir();
+    const memory = loadMemory(stateDir);
+
+    for (const directive of directives) {
+      // Skip if this directive already exists (avoid duplicates)
+      const existing = (memory.userDirectives || []).find(d => d.directive === directive);
+      if (!existing) {
+        addDirective(memory, directive, "normal");
+      }
+    }
+
+    saveMemory(stateDir, memory);
+  } catch { /* best effort */ }
+}
+
 function readCurrentSession() {
   const sessionFile = join(getStateDir(), "session.json");
   if (!existsSync(sessionFile)) return null;
@@ -201,6 +260,9 @@ process.stdin.on("end", () => {
 
   const raw = extractPrompt(input.trim());
   const clean = sanitize(raw);
+
+  // Detect and save user directives ("always use X", "never modify Y", etc.)
+  detectAndSaveDirectives(raw);
 
   for (const kw of KEYWORDS) {
     if (!kw.pattern.test(clean)) continue;

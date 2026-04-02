@@ -21,6 +21,7 @@ import { join } from "path";
 import { execFileSync } from "child_process";
 import { getSystemRoot, getProjectStateRoot, resolveHandoffsDir, ensureRuntimeDirs, readJsonSafe } from "./state-tools/resolve-state-dir.mjs";
 import { readJson, hookOutput as _hookOutput } from "./helpers.mjs";
+import { loadMemory, needsRescan, rescan, saveMemory, formatSummary } from "./project-memory.mjs";
 
 const PLUGIN_VERSION = "v1.2.0";
 
@@ -158,6 +159,19 @@ process.stdin.on("end", () => {
     const setupWarn = checkSetupState(version);
     if (setupWarn) parts.push(setupWarn);
   }
+
+  // Load project memory, rescan if stale (>24h) or missing, inject summary
+  try {
+    let memory = loadMemory(projectStateRoot);
+    if (needsRescan(memory)) {
+      memory = rescan(cwd, memory);
+      saveMemory(projectStateRoot, memory);
+    }
+    const memorySummary = formatSummary(memory, 650);
+    if (memorySummary) {
+      parts.unshift(`[Project Memory]\n${memorySummary}`);
+    }
+  } catch { /* best effort — don't block session start */ }
 
   // Enhanced plugin banner (compact, max 5 lines)
   let bannerLine = `oh-my-beads ${version} loaded.`;

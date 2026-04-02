@@ -3266,6 +3266,241 @@ test("ignores informational query about doctor omb", () => {
   assert(!ctx || !ctx.includes("MAGIC KEYWORD"), "should not trigger on informational doctor query");
 });
 
+// ---- PROJECT MEMORY: detectProjectEnv ----
+
+console.log("\n=== project-memory.mjs (detectProjectEnv) ===\n");
+
+import { detectProjectEnv, loadMemory, saveMemory, formatSummary, addHotPath, addNote, addDirective, needsRescan, rescan } from "../scripts/project-memory.mjs";
+
+test("detectProjectEnv detects Node.js project from package.json", () => {
+  const mockDir = join(TEMP_DIR, "mock-node-project");
+  mkdirSync(mockDir, { recursive: true });
+  writeFileSync(join(mockDir, "package.json"), JSON.stringify({
+    name: "test-app",
+    scripts: { test: "vitest", build: "tsc", lint: "eslint .", dev: "vite" },
+    dependencies: { react: "^18.0.0", express: "^4.0.0" },
+    devDependencies: { typescript: "^5.0.0", vitest: "^1.0.0" },
+  }));
+  writeFileSync(join(mockDir, "tsconfig.json"), "{}");
+  const { techStack, build } = detectProjectEnv(mockDir);
+  assert(techStack.languages.includes("JavaScript"), "should detect JavaScript");
+  assert(techStack.languages.includes("TypeScript"), "should detect TypeScript");
+  assert(techStack.frameworks.includes("React"), `should detect React, got ${techStack.frameworks}`);
+  assert(techStack.frameworks.includes("Express"), `should detect Express, got ${techStack.frameworks}`);
+  assert(techStack.frameworks.includes("Vitest"), `should detect Vitest, got ${techStack.frameworks}`);
+  assert(techStack.pkgManager === "npm", `pkgManager should be npm, got ${techStack.pkgManager}`);
+  assert(techStack.runtime === "node", `runtime should be node, got ${techStack.runtime}`);
+  assert(build.test === "npm test", `build.test should be 'npm test', got ${build.test}`);
+  assert(build.build === "npm run build", `build.build should be 'npm run build', got ${build.build}`);
+  assert(build.lint === "npm run lint", `build.lint should be 'npm run lint', got ${build.lint}`);
+  assert(build.dev === "npm run dev", `build.dev should be 'npm run dev', got ${build.dev}`);
+  rmSync(mockDir, { recursive: true, force: true });
+});
+
+test("detectProjectEnv detects pnpm package manager from lockfile", () => {
+  const mockDir = join(TEMP_DIR, "mock-pnpm-project");
+  mkdirSync(mockDir, { recursive: true });
+  writeFileSync(join(mockDir, "package.json"), JSON.stringify({
+    name: "pnpm-app",
+    scripts: { test: "jest" },
+    devDependencies: { jest: "^29.0.0" },
+  }));
+  writeFileSync(join(mockDir, "pnpm-lock.yaml"), "lockfileVersion: 6");
+  const { techStack, build } = detectProjectEnv(mockDir);
+  assert(techStack.pkgManager === "pnpm", `pkgManager should be pnpm, got ${techStack.pkgManager}`);
+  assert(techStack.frameworks.includes("Jest"), `should detect Jest, got ${techStack.frameworks}`);
+  assert(build.test === "pnpm test", `build.test should be 'pnpm test', got ${build.test}`);
+  rmSync(mockDir, { recursive: true, force: true });
+});
+
+test("detectProjectEnv detects Go project from go.mod", () => {
+  const mockDir = join(TEMP_DIR, "mock-go-project");
+  mkdirSync(mockDir, { recursive: true });
+  writeFileSync(join(mockDir, "go.mod"), "module example.com/myapp\n\ngo 1.21\n");
+  const { techStack, build } = detectProjectEnv(mockDir);
+  assert(techStack.languages.includes("Go"), "should detect Go");
+  assert(techStack.runtime === "go", `runtime should be go, got ${techStack.runtime}`);
+  assert(techStack.pkgManager === "go", `pkgManager should be go, got ${techStack.pkgManager}`);
+  assert(build.test === "go test ./...", `build.test should be 'go test ./...', got ${build.test}`);
+  assert(build.build === "go build ./...", `build.build should be 'go build ./...', got ${build.build}`);
+  rmSync(mockDir, { recursive: true, force: true });
+});
+
+test("detectProjectEnv returns empty for unknown project", () => {
+  const mockDir = join(TEMP_DIR, "mock-empty-project");
+  mkdirSync(mockDir, { recursive: true });
+  const { techStack, build } = detectProjectEnv(mockDir);
+  assert(techStack.languages.length === 0, "should have no languages");
+  assert(techStack.frameworks.length === 0, "should have no frameworks");
+  assert(techStack.pkgManager === "", "should have no pkgManager");
+  assert(build.test === "", "should have no test command");
+  rmSync(mockDir, { recursive: true, force: true });
+});
+
+// ---- PROJECT MEMORY: loadMemory / saveMemory ----
+
+console.log("\n=== project-memory.mjs (loadMemory / saveMemory) ===\n");
+
+test("loadMemory returns default when file missing", () => {
+  const mockStateDir = join(TEMP_DIR, "mock-state-load");
+  mkdirSync(mockStateDir, { recursive: true });
+  const memory = loadMemory(mockStateDir);
+  assert(memory.version === 1, "default version should be 1");
+  assert(memory.lastScanned === 0, "default lastScanned should be 0");
+  assert(Array.isArray(memory.hotPaths), "should have hotPaths array");
+  assert(memory.hotPaths.length === 0, "should start with empty hotPaths");
+  rmSync(mockStateDir, { recursive: true, force: true });
+});
+
+test("saveMemory + loadMemory round-trip works", () => {
+  const mockStateDir = join(TEMP_DIR, "mock-state-save");
+  mkdirSync(mockStateDir, { recursive: true });
+  const memory = {
+    version: 1, lastScanned: Date.now(),
+    techStack: { languages: ["JavaScript"], frameworks: ["React"], pkgManager: "npm", runtime: "node" },
+    build: { test: "npm test", build: "", lint: "", dev: "", scripts: {} },
+    customNotes: [{ timestamp: new Date().toISOString(), category: "debug", content: "Found issue" }],
+    hotPaths: [{ path: "src/app.ts", accessCount: 5, lastAccessed: Date.now(), type: "file" }],
+    userDirectives: [{ timestamp: new Date().toISOString(), directive: "always use TypeScript", priority: "high" }],
+  };
+  saveMemory(mockStateDir, memory);
+  const loaded = loadMemory(mockStateDir);
+  assert(loaded.version === 1, "version preserved");
+  assert(loaded.techStack.languages.includes("JavaScript"), "languages preserved");
+  assert(loaded.customNotes.length === 1, "notes preserved");
+  assert(loaded.hotPaths.length === 1, "hotPaths preserved");
+  assert(loaded.userDirectives.length === 1, "directives preserved");
+  rmSync(mockStateDir, { recursive: true, force: true });
+});
+
+// ---- PROJECT MEMORY: formatSummary ----
+
+console.log("\n=== project-memory.mjs (formatSummary) ===\n");
+
+test("formatSummary respects 650-char default budget", () => {
+  const memory = {
+    version: 1, lastScanned: Date.now(),
+    techStack: { languages: ["JavaScript", "TypeScript"], frameworks: ["React", "Express", "Tailwind CSS"], pkgManager: "npm", runtime: "node" },
+    build: { test: "npm test", build: "npm run build", lint: "npm run lint", dev: "npm run dev", scripts: {} },
+    customNotes: Array.from({ length: 20 }, (_, i) => ({
+      timestamp: new Date(Date.now() - i * 1000).toISOString(), category: "debug", content: `Note ${i} with some detailed content about debugging`,
+    })),
+    hotPaths: Array.from({ length: 50 }, (_, i) => ({
+      path: `src/components/very-long-component-name-${i}.tsx`, accessCount: 50 - i, lastAccessed: Date.now(), type: "file",
+    })),
+    userDirectives: Array.from({ length: 20 }, (_, i) => ({
+      timestamp: new Date().toISOString(), directive: `Always follow pattern ${i} when writing code`, priority: "normal",
+    })),
+  };
+  const summary = formatSummary(memory);
+  assert(summary.length <= 650, `summary should be <= 650 chars, got ${summary.length}`);
+  assertContains(summary, "[Environment]", "should have environment section");
+});
+
+test("formatSummary respects custom budget", () => {
+  const memory = {
+    version: 1, lastScanned: Date.now(),
+    techStack: { languages: ["Python"], frameworks: ["Django"], pkgManager: "pip", runtime: "python" },
+    build: { test: "pytest", build: "", lint: "", dev: "", scripts: {} },
+    customNotes: [], hotPaths: [], userDirectives: [],
+  };
+  const summary = formatSummary(memory, 200);
+  assert(summary.length <= 200, `summary should be <= 200 chars, got ${summary.length}`);
+});
+
+test("formatSummary returns empty string for empty memory", () => {
+  const memory = {
+    version: 1, lastScanned: 0,
+    techStack: { languages: [], frameworks: [], pkgManager: "", runtime: "" },
+    build: { test: "", build: "", lint: "", dev: "", scripts: {} },
+    customNotes: [], hotPaths: [], userDirectives: [],
+  };
+  const summary = formatSummary(memory);
+  assert(summary === "", `summary should be empty for empty memory, got "${summary}"`);
+});
+
+// ---- PROJECT MEMORY: addHotPath / addNote / addDirective limits ----
+
+console.log("\n=== project-memory.mjs (Bounded Collections) ===\n");
+
+test("addHotPath enforces max 50 entries", () => {
+  const memory = { hotPaths: [] };
+  // Add 55 entries — should cap at 50
+  for (let i = 0; i < 55; i++) {
+    addHotPath(memory, `src/file-${i}.ts`, "file");
+  }
+  assert(memory.hotPaths.length <= 50, `hotPaths should be <= 50, got ${memory.hotPaths.length}`);
+});
+
+test("addHotPath increments accessCount for existing path", () => {
+  const memory = { hotPaths: [] };
+  addHotPath(memory, "src/app.ts", "file");
+  addHotPath(memory, "src/app.ts", "file");
+  addHotPath(memory, "src/app.ts", "file");
+  const entry = memory.hotPaths.find(p => p.path === "src/app.ts");
+  assert(entry.accessCount === 3, `accessCount should be 3, got ${entry.accessCount}`);
+  assert(memory.hotPaths.length === 1, "should have only 1 entry");
+});
+
+test("addNote enforces max 20 entries", () => {
+  const memory = { customNotes: [] };
+  for (let i = 0; i < 25; i++) {
+    addNote(memory, `Note ${i}`, "debug");
+  }
+  assert(memory.customNotes.length <= 20, `customNotes should be <= 20, got ${memory.customNotes.length}`);
+});
+
+test("addDirective enforces max 20 entries", () => {
+  const memory = { userDirectives: [] };
+  for (let i = 0; i < 25; i++) {
+    addDirective(memory, `Always do X${i}`, "normal");
+  }
+  assert(memory.userDirectives.length <= 20, `userDirectives should be <= 20, got ${memory.userDirectives.length}`);
+});
+
+// ---- PROJECT MEMORY: needsRescan / rescan ----
+
+console.log("\n=== project-memory.mjs (Rescan) ===\n");
+
+test("needsRescan returns true when lastScanned is 0", () => {
+  const memory = { lastScanned: 0 };
+  assert(needsRescan(memory) === true, "should need rescan when never scanned");
+});
+
+test("needsRescan returns true when lastScanned > 24 hours ago", () => {
+  const memory = { lastScanned: Date.now() - 25 * 60 * 60 * 1000 };
+  assert(needsRescan(memory) === true, "should need rescan after 25 hours");
+});
+
+test("needsRescan returns false when lastScanned is recent", () => {
+  const memory = { lastScanned: Date.now() - 1000 };
+  assert(needsRescan(memory) === false, "should not need rescan when recent");
+});
+
+test("rescan preserves customNotes, hotPaths, userDirectives", () => {
+  const mockDir = join(TEMP_DIR, "mock-rescan-project");
+  mkdirSync(mockDir, { recursive: true });
+  writeFileSync(join(mockDir, "package.json"), JSON.stringify({ name: "rescan-test", scripts: {} }));
+  const memory = {
+    version: 1, lastScanned: 0,
+    techStack: { languages: [], frameworks: [], pkgManager: "", runtime: "" },
+    build: { test: "", build: "", lint: "", dev: "", scripts: {} },
+    customNotes: [{ timestamp: new Date().toISOString(), category: "fix", content: "Important fix" }],
+    hotPaths: [{ path: "src/main.ts", accessCount: 10, lastAccessed: Date.now(), type: "file" }],
+    userDirectives: [{ timestamp: new Date().toISOString(), directive: "use tabs", priority: "high" }],
+  };
+  const updated = rescan(mockDir, memory);
+  assert(updated.lastScanned > 0, "lastScanned should be updated");
+  assert(updated.techStack.languages.includes("JavaScript"), "should detect language after rescan");
+  assert(updated.customNotes.length === 1, "customNotes preserved");
+  assert(updated.customNotes[0].content === "Important fix", "note content preserved");
+  assert(updated.hotPaths.length === 1, "hotPaths preserved");
+  assert(updated.hotPaths[0].path === "src/main.ts", "hotPath path preserved");
+  assert(updated.userDirectives.length === 1, "directives preserved");
+  assert(updated.userDirectives[0].directive === "use tabs", "directive content preserved");
+  rmSync(mockDir, { recursive: true, force: true });
+});
+
 // ============================================================
 // SUMMARY
 // ============================================================

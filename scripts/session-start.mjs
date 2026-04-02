@@ -212,6 +212,32 @@ process.stdin.on("end", () => {
       if (checkpoint.active_subagents?.length > 0) {
         parts.push(`Active subagents that may need re-spawning: ${checkpoint.active_subagents.map(a => `${a.role}(${a.id})`).join(", ")}`);
       }
+
+      // Worker prompt recovery: inject worker prompt file path during execution phase
+      if (checkpoint.worker_prompt_file) {
+        parts.push(
+          `\n[WORKER PROMPT RECOVERY] Re-read your bead assignment from: ${checkpoint.worker_prompt_file}` +
+          `\nIf you are a Worker and lost context about your assigned bead, read this file immediately.`
+        );
+      } else if (phase === "phase_5_execution") {
+        // Fallback: scan plans directory for worker prompt files
+        try {
+          const plansDir = join(cwd, ".oh-my-beads", "plans");
+          if (existsSync(plansDir)) {
+            const workerFiles = readdirSync(plansDir)
+              .filter(f => f.startsWith("worker-") && f.endsWith(".md"))
+              .sort()
+              .reverse();
+            if (workerFiles.length > 0) {
+              parts.push(
+                `\n[WORKER PROMPT RECOVERY] Worker prompt files found in .oh-my-beads/plans/:` +
+                `\n${workerFiles.map(f => `  - .oh-my-beads/plans/${f}`).join("\n")}` +
+                `\nIf you are a Worker and lost context, read the relevant file to recover your bead assignment.`
+              );
+            }
+          }
+        } catch { /* best effort */ }
+      }
     }
 
     if (handoff) {

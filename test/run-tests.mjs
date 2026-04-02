@@ -3681,6 +3681,187 @@ test("keyword-detector detects 'never modify' directive", () => {
 });
 
 // ============================================================
+// Worker Prompt Recovery
+// ============================================================
+
+console.log("\n=== Worker Prompt Recovery — pre-compact checkpoint ===\n");
+
+test("pre-compact includes worker_prompt_file in checkpoint during phase_5_execution with active worker", () => {
+  resetState();
+  writeState({
+    active: true,
+    mode: "mr.beads",
+    current_phase: "phase_5_execution",
+    feature_slug: "test-feature",
+    started_at: new Date().toISOString(),
+    reinforcement_count: 2,
+    failure_count: 0,
+  });
+  // Write subagent tracking with an active worker
+  writeFileSync(
+    join(STATE_DIR, "subagent-tracking.json"),
+    JSON.stringify({
+      agents: [{ id: "bd-3", role: "worker", started_at: new Date().toISOString(), status: "running" }],
+    })
+  );
+  // Create a worker prompt file
+  const plansDir = join(TEMP_DIR, ".oh-my-beads", "plans");
+  mkdirSync(plansDir, { recursive: true });
+  writeFileSync(join(plansDir, "worker-bd-3.md"), "# Bead bd-3 Assignment\n## Accept Criteria\n- Fix bug");
+
+  const { output } = runScript("pre-compact.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed, "output should be valid JSON");
+  // Read checkpoint directly
+  const checkpoint = JSON.parse(readFileSync(join(STATE_DIR, "checkpoint.json"), "utf8"));
+  assert(checkpoint.worker_prompt_file === ".oh-my-beads/plans/worker-bd-3.md", `checkpoint should include worker_prompt_file, got: ${checkpoint.worker_prompt_file}`);
+});
+
+test("pre-compact includes worker_prompt_file from plans scan when no active worker subagent", () => {
+  resetState();
+  writeState({
+    active: true,
+    mode: "mr.beads",
+    current_phase: "phase_5_execution",
+    feature_slug: "test-feature",
+    started_at: new Date().toISOString(),
+    reinforcement_count: 0,
+    failure_count: 0,
+  });
+  // No subagent tracking — worker may have completed
+  // But a worker prompt file exists
+  const plansDir = join(TEMP_DIR, ".oh-my-beads", "plans");
+  mkdirSync(plansDir, { recursive: true });
+  writeFileSync(join(plansDir, "worker-bd-5.md"), "# Bead bd-5 Assignment\n## Accept Criteria\n- Add feature");
+
+  const { output } = runScript("pre-compact.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed, "output should be valid JSON");
+  const checkpoint = JSON.parse(readFileSync(join(STATE_DIR, "checkpoint.json"), "utf8"));
+  assert(checkpoint.worker_prompt_file === ".oh-my-beads/plans/worker-bd-5.md", `checkpoint should include worker_prompt_file from scan, got: ${checkpoint.worker_prompt_file}`);
+});
+
+test("pre-compact does NOT include worker_prompt_file for non-execution phases", () => {
+  resetState();
+  writeState({
+    active: true,
+    mode: "mr.beads",
+    current_phase: "phase_2_planning",
+    feature_slug: "test-feature",
+    started_at: new Date().toISOString(),
+    reinforcement_count: 0,
+    failure_count: 0,
+  });
+  const plansDir = join(TEMP_DIR, ".oh-my-beads", "plans");
+  mkdirSync(plansDir, { recursive: true });
+  writeFileSync(join(plansDir, "worker-bd-1.md"), "# Bead bd-1");
+
+  const { output } = runScript("pre-compact.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed, "output should be valid JSON");
+  const checkpoint = JSON.parse(readFileSync(join(STATE_DIR, "checkpoint.json"), "utf8"));
+  assert(!checkpoint.worker_prompt_file, "checkpoint should NOT include worker_prompt_file for non-execution phase");
+});
+
+test("pre-compact systemMessage includes worker prompt file path during execution", () => {
+  resetState();
+  writeState({
+    active: true,
+    mode: "mr.beads",
+    current_phase: "phase_5_execution",
+    feature_slug: "test-feature",
+    started_at: new Date().toISOString(),
+    reinforcement_count: 0,
+    failure_count: 0,
+  });
+  writeFileSync(
+    join(STATE_DIR, "subagent-tracking.json"),
+    JSON.stringify({
+      agents: [{ id: "bd-7", role: "worker", started_at: new Date().toISOString(), status: "running" }],
+    })
+  );
+  const plansDir = join(TEMP_DIR, ".oh-my-beads", "plans");
+  mkdirSync(plansDir, { recursive: true });
+  writeFileSync(join(plansDir, "worker-bd-7.md"), "# Bead bd-7 Assignment");
+
+  const { output } = runScript("pre-compact.mjs", { cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assert(parsed, "output should be valid JSON");
+  assert(parsed.systemMessage, "should have systemMessage");
+  assertContains(parsed.systemMessage, "worker-bd-7.md", "systemMessage should mention worker prompt file");
+  assertContains(parsed.systemMessage, "re-read this to recover", "systemMessage should include recovery instruction");
+});
+
+console.log("\n=== Worker Prompt Recovery — session-start resume ===\n");
+
+test("session-start injects worker prompt path from checkpoint on post-compaction resume", () => {
+  resetState();
+  writeState({
+    active: true,
+    mode: "mr.beads",
+    current_phase: "phase_5_execution",
+    feature_slug: "test-feature",
+    started_at: new Date().toISOString(),
+    reinforcement_count: 0,
+    failure_count: 0,
+  });
+  // Write checkpoint with worker_prompt_file
+  writeFileSync(
+    join(STATE_DIR, "checkpoint.json"),
+    JSON.stringify({
+      checkpointed_at: new Date().toISOString(),
+      session: { active: true, mode: "mr.beads", current_phase: "phase_5_execution", feature_slug: "test-feature" },
+      worker_prompt_file: ".oh-my-beads/plans/worker-bd-3.md",
+      active_subagents: [{ id: "bd-3", role: "worker", started_at: new Date().toISOString() }],
+      tool_tracking: { files_modified: [], tool_count: 0, failure_count: 0 },
+      reason: "pre_compaction",
+    })
+  );
+
+  const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "compact" });
+  const parsed = parseOutput(output);
+  assert(parsed, "output should be valid JSON");
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "WORKER PROMPT RECOVERY", "should inject worker prompt recovery context");
+  assertContains(ctx, "worker-bd-3.md", "should mention the specific worker prompt file");
+});
+
+test("session-start scans plans directory when no worker_prompt_file in checkpoint but phase is execution", () => {
+  resetState();
+  writeState({
+    active: true,
+    mode: "mr.beads",
+    current_phase: "phase_5_execution",
+    feature_slug: "test-feature",
+    started_at: new Date().toISOString(),
+    reinforcement_count: 0,
+    failure_count: 0,
+  });
+  // Write checkpoint WITHOUT worker_prompt_file
+  writeFileSync(
+    join(STATE_DIR, "checkpoint.json"),
+    JSON.stringify({
+      checkpointed_at: new Date().toISOString(),
+      session: { active: true, mode: "mr.beads", current_phase: "phase_5_execution", feature_slug: "test-feature" },
+      active_subagents: [],
+      tool_tracking: { files_modified: [], tool_count: 0, failure_count: 0 },
+      reason: "pre_compaction",
+    })
+  );
+  // Create worker prompt files in plans directory
+  const plansDir = join(TEMP_DIR, ".oh-my-beads", "plans");
+  mkdirSync(plansDir, { recursive: true });
+  writeFileSync(join(plansDir, "worker-bd-10.md"), "# Bead bd-10 Assignment");
+
+  const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "compact" });
+  const parsed = parseOutput(output);
+  assert(parsed, "output should be valid JSON");
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "WORKER PROMPT RECOVERY", "should inject worker prompt recovery context from scan");
+  assertContains(ctx, "worker-bd-10.md", "should mention the scanned worker prompt file");
+});
+
+// ============================================================
 // SUMMARY
 // ============================================================
 

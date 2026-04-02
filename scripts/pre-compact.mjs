@@ -78,6 +78,31 @@ process.stdin.on("end", () => {
       .map(a => ({ id: a.id, role: a.role, started_at: a.started_at })),
     reason: "pre_compaction",
   };
+
+  // Include worker prompt file path during execution phase for Worker recovery
+  if ((session.mode || "mr.beads") === "mr.beads" && phase === "phase_5_execution") {
+    const activeWorker = checkpoint.active_subagents.find(a => a.role === "worker");
+    if (activeWorker) {
+      // Extract bead-id from the worker's agent id (format: worker-{timestamp} or bd-N)
+      const beadId = activeWorker.id;
+      const promptFile = `.oh-my-beads/plans/worker-${beadId}.md`;
+      checkpoint.worker_prompt_file = promptFile;
+    }
+    // Also scan plans directory for the most recent worker prompt file
+    try {
+      const plansDir = join(directory, ".oh-my-beads", "plans");
+      if (existsSync(plansDir)) {
+        const workerFiles = readdirSync(plansDir)
+          .filter(f => f.startsWith("worker-") && f.endsWith(".md"))
+          .sort()
+          .reverse();
+        if (workerFiles.length > 0 && !checkpoint.worker_prompt_file) {
+          checkpoint.worker_prompt_file = `.oh-my-beads/plans/${workerFiles[0]}`;
+        }
+      }
+    } catch { /* best effort */ }
+  }
+
   writeJsonAtomic(join(stateDir, "checkpoint.json"), checkpoint);
 
   // 2. Write handoff document
@@ -130,6 +155,7 @@ process.stdin.on("end", () => {
     ``,
     `Resume: Read .oh-my-beads/state/session.json and .oh-my-beads/handoffs/ for full context.`,
     mode === "mr.beads" ? `Check beads_village ls(status="ready") for next work.` : `Continue the Mr.Fast workflow.`,
+    checkpoint.worker_prompt_file ? `Worker prompt file: ${checkpoint.worker_prompt_file} — re-read this to recover your bead assignment.` : "",
   ].filter(Boolean).join("\n");
 
   // 4b. Append project memory summary so it survives compaction

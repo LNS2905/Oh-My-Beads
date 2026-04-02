@@ -34,6 +34,30 @@ single responsibility: implement the bead's acceptance criteria and nothing else
 
 <Steps>
 
+## Step 0: Context Recovery (Post-Compaction)
+
+<HARD-GATE>
+**If you detect loss of context about your assigned bead, STOP and read your assignment
+from `.oh-my-beads/plans/worker-{bead-id}.md` before continuing.** After compaction,
+your conversation history is truncated and you may not remember your bead assignment,
+acceptance criteria, or file scope. The worker prompt file contains your full assignment.
+Do NOT attempt to continue implementation from memory — re-read the file first.
+</HARD-GATE>
+
+Signs of context loss (any of these → trigger recovery):
+- You don't know which bead you're implementing
+- You can't recall the acceptance criteria
+- You don't remember which files are in scope
+- The session-start hook injected a `[WORKER PROMPT RECOVERY]` message
+
+Recovery steps:
+1. Check the post-compaction context for `worker_prompt_file` path
+2. If not available, scan `.oh-my-beads/plans/` for `worker-*.md` files
+3. Read the worker prompt file matching your bead ID
+4. Re-read all in-scope files to rebuild understanding
+5. Check `mcp__beads-village__show()` for current bead state
+6. Resume implementation from where you left off
+
 ## Step 1: Init & Claim
 
 ```
@@ -205,6 +229,7 @@ Stop and self-correct if you catch yourself doing any of these:
 </Escalation_And_Stop_Conditions>
 
 <Final_Checklist>
+- [ ] Context recovered from worker-{bead-id}.md if post-compaction (HARD-GATE)
 - [ ] Bead claimed via claim()
 - [ ] All files reserved via reserve() before editing (HARD-GATE)
 - [ ] Only in-scope files modified (HARD-GATE)

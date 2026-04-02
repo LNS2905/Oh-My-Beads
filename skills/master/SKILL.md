@@ -116,7 +116,19 @@ Skip Phase 0 and Phase 1 entirely. Jump to Phase 2 with inline planning:
 1. **Phase 1: Requirements & Clarification**
    *(Complex path only — skipped for simple path)*
 
-   Spawn Scout agent with LEARNINGS_CONTEXT from Phase 0:
+   <HARD-GATE>
+   **NEVER research the codebase yourself.** You are the ORCHESTRATOR — you delegate.
+   DO NOT use Read, Glob, or Grep on source code files. The Scout handles all codebase exploration.
+   You MUST spawn a Scout subagent via the Agent tool. If you find yourself reading source code, STOP and spawn Scout instead.
+   </HARD-GATE>
+
+   Spawn Scout agent with LEARNINGS_CONTEXT from Phase 0.
+   Use the Agent tool. The prompt should include:
+   - The full content of the oh-my-beads:scout skill (read `skills/scout/SKILL.md`)
+   - The user's request
+   - The feature slug
+   - LEARNINGS_CONTEXT from Phase 0
+
    ```
    Agent(
      description="Scout exploration",
@@ -135,6 +147,12 @@ Skip Phase 0 and Phase 1 entirely. Jump to Phase 2 with inline planning:
    Update session.json: `current_phase: "gate_1_pending"` → `current_phase: "phase_2_planning"`
 
 2. **Phase 2: Planning, Feedback & Plan Persistence**
+
+   <HARD-GATE>
+   **NEVER plan or research the codebase yourself.** Spawn the Architect subagent.
+   DO NOT use Read, Glob, or Grep on source code files during this phase.
+   You MUST spawn an Architect subagent via the Agent tool for complex path planning.
+   </HARD-GATE>
 
    **For complex path:** Spawn Architect (planning mode) with LEARNINGS_CONTEXT:
    ```
@@ -195,6 +213,12 @@ Skip Phase 0 and Phase 1 entirely. Jump to Phase 2 with inline planning:
    mcp__beads-village__init(team="oh-my-beads", leader=true)
    ```
 
+   <HARD-GATE>
+   **NEVER decompose tasks or research the codebase yourself.** Spawn the Architect subagent for decomposition.
+   DO NOT use Read, Glob, or Grep on source code files during this phase.
+   You MUST spawn an Architect subagent via the Agent tool to create beads.
+   </HARD-GATE>
+
    Spawn Architect (decomposition mode) to create beads for the **current phase only**:
    ```
    Agent(
@@ -239,6 +263,12 @@ Skip Phase 0 and Phase 1 entirely. Jump to Phase 2 with inline planning:
 5. **Phase 5: Execution**
 
    <HARD-GATE>
+   **NEVER implement code yourself.** You MUST spawn Worker subagents for all implementation.
+   DO NOT use Edit, Write, or MultiEdit on source code files. Workers handle all code changes.
+   If you find yourself writing code, STOP and spawn a Worker instead.
+   </HARD-GATE>
+
+   <HARD-GATE>
    Before spawning each Worker, persist the full assignment to disk for compaction
    recovery and audit trail:
    ```
@@ -276,6 +306,12 @@ Skip Phase 0 and Phase 1 entirely. Jump to Phase 2 with inline planning:
    Update session.json: `current_phase: "phase_5_execution"` → `current_phase: "phase_6_review"`
 
 6. **Phase 6: Per-Task Quality Review**
+
+   <HARD-GATE>
+   **NEVER review code yourself.** You MUST spawn Reviewer subagents for all quality reviews.
+   DO NOT assess code quality, patterns, or correctness directly. The Reviewer handles all review work.
+   </HARD-GATE>
+
    Integrated into Phase 5 loop. Per bead, Reviewer checks:
    - Functional correctness (all acceptance criteria met)
    - Code quality (follows existing patterns, no dead code)
@@ -350,7 +386,13 @@ Skip Phase 0 and Phase 1 entirely. Jump to Phase 2 with inline planning:
 - **AskUserQuestion:** HITL gates (3 mandatory gates)
 - **Read/Write:** State files, handoffs, and worker prompt files ONLY (never source code)
 - **Skill:** Load sub-agent skill content for spawn prompts
-- **NEVER:** Edit/Write on source code, reserve/release/claim (Worker's job)
+
+<HARD-GATE>
+Read/Write: State files (.oh-my-beads/), handoffs, and worker prompt files ONLY.
+NEVER read source code files directly. ALL codebase exploration is delegated to subagents (Scout, Architect, Explorer, Worker).
+NEVER Edit/Write/MultiEdit on source code. Workers implement. Reviewers verify. Master orchestrates.
+NEVER reserve/release/claim — that is the Worker's job.
+</HARD-GATE>
 
 **Configurable models:** Agent models can be overridden by the user via `~/.oh-my-beads/config.json`.
 See `scripts/config.mjs` for `getModelForRole(role)`. When spawning sub-agents, the configured

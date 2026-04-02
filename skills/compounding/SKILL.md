@@ -52,6 +52,17 @@ of this session's experience. This is non-negotiable for any feature that comple
 execution. The only exception is trivial one-line changes where nothing reusable emerged.
 </HARD-GATE>
 
+<HARD-GATE>
+**Skill Promotion: Only promote genuinely reusable knowledge.** Never promote project-specific
+one-time fixes into skill files. A promoted skill must pass ALL three gates:
+1. **Reusable** — The knowledge applies to future features, not just the one that produced it.
+2. **Actionable** — The skill contains a concrete fix (code change, config adjustment, command)
+   with enough context that a future agent can apply it without further investigation.
+3. **Triggerable** — The skill has identifiable error messages, file patterns, or symptom keywords
+   that the skill-injector can match against future prompts.
+If ANY gate fails, do NOT create the skill file. Log the skip reason and move on.
+</HARD-GATE>
+
 <Steps>
 1. **Phase 1: Gather Context**
    Read all artifacts from the completed feature:
@@ -246,7 +257,7 @@ Write to: /tmp/omb-compounding-exit-audit.md",
       Append the **20** oldest entries to the archive (do NOT overwrite existing archive content).
    3. Remove the **20** archived entries from critical-patterns.md
    4. Log: "Archived 20 oldest patterns to maintain signal-to-noise ratio (threshold: 50, archived: 20)"
-   5. Report in Phase 5 output: `"patterns_archived": 20, "archive_path": ".oh-my-beads/history/learnings/critical-patterns-archive.md"`
+   5. Report in Phase 6 output: `"patterns_archived": 20, "archive_path": ".oh-my-beads/history/learnings/critical-patterns-archive.md"`
 
 4. **Phase 4: Promote Critical Learnings**
 
@@ -278,13 +289,102 @@ Write to: /tmp/omb-compounding-exit-audit.md",
    ---
    ```
 
-5. **Phase 5: Update Session State**
+5. **Phase 5: Skill Promotion**
+
+   After writing the learnings file and promoting critical findings, check whether any
+   learnings should be promoted into learned skill files that the skill-injector can
+   auto-discover and inject into future prompts.
+
+   **Step 5.1 — Identify Promotion Candidates**
+
+   Scan the learnings file written in Phase 3 (YYYYMMDD-<slug>.md). A learning qualifies
+   for skill promotion if it meets EITHER condition:
+
+   - **P1/Critical severity:** Any finding tagged `severity: critical`
+   - **Actionable pattern match:** The learning content contains ALL of:
+     - Specific error messages OR file paths (identifiable trigger material)
+     - An actionable fix (concrete code change, config adjustment, or command)
+
+   Look for these signals in the learning content:
+   - `error:` or exact error message text (quoted strings, stack traces)
+   - File paths (e.g., `scripts/foo.mjs`, `src/auth/token.ts`)
+   - `fix:` or imperative fix instructions ("Always...", "Never...", "Change X to Y")
+
+   **Step 5.2 — Apply Quality Gates (HARD-GATE)**
+
+   For each candidate, apply all three promotion gates:
+
+   | Gate | Question | FAIL → Skip |
+   |------|----------|-------------|
+   | **Reusable** | Does this apply to future features, not just this one? | One-time migration fix, environment-specific issue → skip |
+   | **Actionable** | Does it contain a concrete fix an agent can apply? | Vague advice like "be more careful" → skip |
+   | **Triggerable** | Can the skill-injector match it via error messages, file names, or symptoms? | No identifiable trigger keywords → skip |
+
+   If ANY gate fails, log: `"Skipped skill promotion for '<learning-title>': failed <gate-name> gate"`
+   and move to the next candidate.
+
+   **Step 5.3 — Generate Skill File**
+
+   For each candidate that passes all three gates, create a skill file at:
+   ```
+   {cwd}/.oh-my-beads/skills/<slug>.md
+   ```
+
+   The skill file MUST use the same format as the Learner skill
+   (see `skills/learner/references/skill-template.md`):
+
+   ```yaml
+   ---
+   name: <slug>
+   description: <one-line summary — what goes wrong and how to fix it>
+   triggers:
+     - <exact error message fragment>
+     - <file or module name>
+     - <symptom keyword>
+   source: compounding
+   tags:
+     - <domain tag from learning>
+   ---
+
+   # Problem
+
+   <What goes wrong — extracted from the learning's "What Happened" and
+   "Root Cause / Key Insight" sections. Include exact error messages and
+   file paths.>
+
+   # Solution
+
+   <The exact fix — extracted from the learning's "Recommendation for Future Work"
+   section. Include specific file changes, config adjustments, or commands.>
+   ```
+
+   **Slug rules:** Same as Learner — lowercase, hyphens only, 3–5 words.
+   Pattern: `<domain>-<specific-problem>` (e.g., `auth-token-refresh-race`).
+
+   **Trigger derivation:** Extract triggers from:
+   - Error message fragments (verbatim, not paraphrased)
+   - File names or module names mentioned in the learning
+   - Symptom keywords from the "What Happened" section
+   - At least 2 triggers per skill, ideally 3–5
+
+   **Source field:** Use `source: compounding` (not `learned`) to distinguish
+   auto-promoted skills from manually created ones.
+
+   **Step 5.4 — Report Promotions**
+
+   Track the number of skills promoted for the final report. Log each promotion:
+   ```
+   Promoted skill: <slug> → .oh-my-beads/skills/<slug>.md (triggers: <trigger1>, <trigger2>)
+   ```
+
+6. **Phase 6: Update Session State**
    Update `session.json`:
    ```json
    {
      "compounding_complete": true,
      "learnings_file": "history/learnings/YYYYMMDD-<slug>.md",
-     "critical_promotions": N
+     "critical_promotions": N,
+     "skills_promoted": M
    }
    ```
 
@@ -293,6 +393,7 @@ Write to: /tmp/omb-compounding-exit-audit.md",
    Compounding complete.
    - Learnings: .oh-my-beads/history/learnings/YYYYMMDD-<slug>.md
    - Critical promotions: N findings added to critical-patterns.md
+   - Skills promoted: M learned skill files created in .oh-my-beads/skills/
    - Total accumulated learnings: <count of files in history/learnings/>
    ```
 </Steps>
@@ -300,7 +401,7 @@ Write to: /tmp/omb-compounding-exit-audit.md",
 <Tool_Usage>
 - **Read, Glob, Grep** — Gather artifacts from feature history
 - **Agent** — Spawn 4 parallel analysis agents (pattern/decision/failure/exit-audit)
-- **Write** — Learnings file and critical-patterns.md ONLY
+- **Write** — Learnings file, critical-patterns.md, and promoted skill files (.oh-my-beads/skills/*.md)
 - **Bash** — Git log for commit history
 - **NEVER:** Edit source code, reserve, claim, done
 </Tool_Usage>
@@ -313,11 +414,18 @@ After completing a REST API feature, compounding captures:
 - Failure: "Missing database index on user_id caused 500ms queries under load"
   Prevention: "Always add indexes for foreign keys used in WHERE clauses"
 Why good: Specific, actionable, names files and scenarios. Future agents can apply these.
+
+The failure learning gets promoted to a skill file because it has:
+- Specific error: "500ms queries under load"
+- File context: database index on user_id
+- Actionable fix: "Always add indexes for foreign keys used in WHERE clauses"
+→ Created `.oh-my-beads/skills/db-missing-fk-index.md` with triggers: ["500ms queries", "user_id", "foreign key index"]
 </Good>
 
 <Bad>
 Compounding writes: "We should test more" and "The architecture was good."
 Why bad: Vague. Names no files, no functions, no scenarios. Future agents learn nothing.
+Cannot be promoted to a skill — no error messages, no file paths, no actionable fix.
 </Bad>
 </Examples>
 
@@ -332,8 +440,9 @@ Why bad: Vague. Names no files, no functions, no scenarios. Future agents learn 
 - [ ] Learnings file written with YAML frontmatter and domain tags
 - [ ] Critical findings promoted to critical-patterns.md (if any)
 - [ ] critical-patterns.md pruned if >50 entries (oldest 20 archived to critical-patterns-archive.md)
+- [ ] Skill promotion: qualifying learnings promoted to .oh-my-beads/skills/ (HARD-GATE quality gates applied)
 - [ ] Learnings written before feature close (HARD-GATE)
-- [ ] Session state updated
+- [ ] Session state updated (including skills_promoted count)
 - [ ] Report sent to Master
 </Final_Checklist>
 
@@ -342,12 +451,15 @@ Why bad: Vague. Names no files, no functions, no scenarios. Future agents learn 
 
 ```
 Feature N → compounding → critical-patterns.md
+                        → .oh-my-beads/skills/*.md (promoted skills)
                               ↓
 Feature N+1 → Scout reads critical-patterns.md → asks better questions
             → Architect reads critical-patterns.md → avoids known pitfalls
+            → skill-injector matches triggers → injects relevant skills into prompts
             → Worker applies known patterns → fewer failures
                               ↓
 Feature N+1 → compounding → critical-patterns.md grows
+                           → more skill files promoted
                               ↓
 Feature N+2 starts even smarter...
 ```
@@ -358,4 +470,6 @@ Feature N+2 starts even smarter...
 - Do NOT promote everything as critical — critical-patterns.md is read at session start; automated pruning archives the oldest 20 entries when count exceeds 50, but keep promotions genuinely critical to avoid dilution
 - Do NOT write generic learnings — "test more carefully" is worthless; name the specific file, function, and scenario
 - Do NOT fabricate findings — if the feature ran smoothly, write that honestly
+- Do NOT promote one-time fixes as skills — "fixed typo in config.json" is not reusable knowledge; skill files must pass all three quality gates (Reusable, Actionable, Triggerable)
+- Do NOT paraphrase error messages in skill triggers — use EXACT error text for reliable matching
 </Advanced>

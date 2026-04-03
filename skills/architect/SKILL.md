@@ -54,8 +54,12 @@ inform later ones.
    - Grep `.oh-my-beads/history/learnings/` for matching tags
    - Score and read strong matches; skip weak matches
    - Note findings for inclusion in plan.md
-3. **Research** codebase: architecture, patterns, dependencies, relevant files
-   Use Glob, Grep, Read extensively to understand existing code.
+3. **Research** codebase via Explorer subagents:
+   - Spawn 2-4 Explorer subagents (model="haiku") in parallel for different research areas
+   - Each Explorer receives a focused research query (e.g., "map auth middleware patterns", "find all database schema files and relationships", "trace the API route structure")
+   - Explorers report back with patterns, dependencies, file structures
+   - Synthesize Explorer findings to inform the plan
+   - Targeted Read/Glob/Grep still allowed for specific file lookups after Explorer reports
 
 ### Step 3.5: AI-Slop Detection
 
@@ -210,7 +214,8 @@ is_final_phase: true|false
 </Steps>
 
 <Tool_Usage>
-- **Read, Glob, Grep** — Deep codebase research (planning mode)
+- **Agent** — Spawn Explorer subagents (2-4, haiku) for codebase research (planning mode)
+- **Read, Glob, Grep** — Targeted lookups for specific files (planning mode)
 - **Write** — plan.md output only (planning mode)
 - **mcp__beads-village__add()** — Create beads (decomposition mode, via Master)
 - **NEVER:** Edit source code, reserve, claim, done
@@ -230,6 +235,7 @@ Stop and self-correct if you catch yourself doing any of these:
 - **Artificial serialization** — adding dependencies that aren't real to force sequential execution
 - **Writing code** — even pseudocode or implementation sketches
 - **Skipping learnings** — not reading critical-patterns.md when it exists
+- **Direct deep codebase exploration** — delegate systematic codebase research to Explorer subagents instead of doing extensive Glob/Grep/Read yourself
 </Red_Flags>
 
 <Examples>

@@ -12,10 +12,11 @@
  * Skill file format: YAML frontmatter (name, description, triggers[], source, tags[])
  * + markdown body (# Problem, # Solution).
  *
- * Matching: case-insensitive substring match of triggers against user prompt.
- * Scoring: +10 per trigger match, sorted descending.
+ * Matching: word-boundary regex match of triggers against user prompt.
+ * Scoring: +10 per single-word trigger match, +15 per multi-word trigger match.
  * Cap: MAX_SKILLS=3 per prompt.
  * Dedup: tracks injected skills per session to avoid re-injection.
+ * Feedback: tracks negative feedback per skill; suppresses skills with ≥3 negatives.
  *
  * OMB_QUIET support: suppress at level 2.
  * Early-returns if no .oh-my-beads/skills/ directories exist.
@@ -30,6 +31,9 @@ import { getProjectStateRoot } from "./state-tools/resolve-state-dir.mjs";
 // --- Config ---
 const MAX_SKILLS = 3;
 const SCORE_PER_TRIGGER = 10;
+const SCORE_PER_MULTI_WORD_TRIGGER = 15;
+const MIN_SCORE_THRESHOLD = 10;
+const NEGATIVE_FEEDBACK_THRESHOLD = 3;
 
 // --- Helpers ---
 
@@ -160,15 +164,34 @@ export function discoverSkills(dir, priority) {
 }
 
 /**
- * Match skill triggers against user prompt.
- * Returns score (+10 per trigger match).
+ * Escape special regex characters in a string.
+ */
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Match skill triggers against user prompt using word-boundary matching.
+ * Returns score: +10 per single-word trigger match, +15 per multi-word trigger match.
+ * Uses word-boundary regex instead of plain substring includes().
  */
 export function scoreSkill(skill, prompt) {
   const lowerPrompt = prompt.toLowerCase();
   let score = 0;
   for (const trigger of skill.triggers) {
-    if (lowerPrompt.includes(trigger.toLowerCase())) {
-      score += SCORE_PER_TRIGGER;
+    const lowerTrigger = trigger.toLowerCase();
+    const isMultiWord = lowerTrigger.includes(" ");
+    try {
+      // Word-boundary matching: \b ensures trigger matches whole words
+      const pattern = new RegExp(`\\b${escapeRegex(lowerTrigger)}\\b`, "i");
+      if (pattern.test(lowerPrompt)) {
+        score += isMultiWord ? SCORE_PER_MULTI_WORD_TRIGGER : SCORE_PER_TRIGGER;
+      }
+    } catch {
+      // Fallback to exact includes if regex fails
+      if (lowerPrompt.includes(lowerTrigger)) {
+        score += isMultiWord ? SCORE_PER_MULTI_WORD_TRIGGER : SCORE_PER_TRIGGER;
+      }
     }
   }
   return score;
@@ -184,21 +207,58 @@ function loadInjectedSkills(stateDir) {
 }
 
 /**
- * Save injected skill names for this session.
+ * Save injected skill names for this session, with per-skill tracking.
  */
-function saveInjectedSkills(stateDir, skillNames) {
+function saveInjectedSkills(stateDir, skillNames, newlyInjected) {
   const filePath = join(stateDir, "injected-skills.json");
-  writeJsonAtomic(filePath, { skills: skillNames, updated_at: new Date().toISOString() });
+  const existing = readJson(filePath) || {};
+  const tracking = existing.tracking || {};
+
+  // Update tracking for newly injected skills
+  for (const name of newlyInjected) {
+    if (!tracking[name]) {
+      tracking[name] = { totalInjections: 0, lastInjected: null };
+    }
+    tracking[name].totalInjections += 1;
+    tracking[name].lastInjected = new Date().toISOString();
+  }
+
+  writeJsonAtomic(filePath, {
+    skills: skillNames,
+    tracking,
+    updated_at: new Date().toISOString(),
+  });
+}
+
+/**
+ * Load skill feedback data (negative feedback counts).
+ * Returns object: { slug: { negativeCount, lastNegative, reason } }
+ */
+export function loadSkillFeedback(stateDir) {
+  const filePath = join(stateDir, "skill-feedback.json");
+  return readJson(filePath) || {};
+}
+
+/**
+ * Check if a skill is suppressed due to negative feedback.
+ */
+function isSkillSuppressed(feedback, skillName) {
+  const entry = feedback[skillName];
+  if (!entry) return false;
+  return (entry.negativeCount || 0) >= NEGATIVE_FEEDBACK_THRESHOLD;
 }
 
 /**
  * Format matched skills into injection context.
+ * Includes feedback hint so agents can report unhelpful skills.
  */
 function formatInjection(matchedSkills) {
   const parts = matchedSkills.map(s => {
+    const slug = s.name;
     let section = `### ${s.name}`;
     if (s.description) section += `\n${s.description}`;
     if (s.body) section += `\n\n${s.body}`;
+    section += `\n\n_(Report issues: \`<skill-feedback name="${slug}" useful="false">reason</skill-feedback>\`)_`;
     return section;
   });
   return `<omb-learned-skills>\n${parts.join("\n\n---\n\n")}\n</omb-learned-skills>`;
@@ -247,7 +307,7 @@ process.stdin.on("end", () => {
   // Score skills against prompt
   const scored = allSkills
     .map(skill => ({ ...skill, score: scoreSkill(skill, prompt) }))
-    .filter(s => s.score > 0)
+    .filter(s => s.score >= MIN_SCORE_THRESHOLD)
     .sort((a, b) => {
       // Sort by score descending, then by priority ascending (project first)
       if (b.score !== a.score) return b.score - a.score;
@@ -269,13 +329,22 @@ process.stdin.on("end", () => {
     return;
   }
 
+  // Feedback-based suppression: skip skills with too much negative feedback
+  const feedback = loadSkillFeedback(stateDir);
+  const unsuppressed = newSkills.filter(s => !isSkillSuppressed(feedback, s.name));
+
+  if (unsuppressed.length === 0) {
+    _hookOutput("UserPromptSubmit", null);
+    return;
+  }
+
   // Cap at MAX_SKILLS
-  const toInject = newSkills.slice(0, MAX_SKILLS);
+  const toInject = unsuppressed.slice(0, MAX_SKILLS);
 
   // Track injected skills
   const updatedInjected = [...injected, ...toInject.map(s => s.name)];
   try {
-    saveInjectedSkills(stateDir, updatedInjected);
+    saveInjectedSkills(stateDir, updatedInjected, toInject.map(s => s.name));
   } catch { /* best effort */ }
 
   // Format and inject

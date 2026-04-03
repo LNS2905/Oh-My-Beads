@@ -50,7 +50,7 @@ function teardown() {
 
 function resetState() {
   // Clear system-level state files
-  for (const f of ["session.json", "tool-tracking.json", "subagent-tracking.json", "checkpoint.json", "last-tool-error.json", "cancel-signal.json"]) {
+  for (const f of ["session.json", "tool-tracking.json", "subagent-tracking.json", "checkpoint.json", "last-tool-error.json", "cancel-signal.json", "injected-skills.json", "skill-feedback.json"]) {
     rmSync(join(STATE_DIR, f), { force: true });
   }
   // Clean system-level handoffs
@@ -568,6 +568,21 @@ test("allows Write for executor", () => {
 test("blocks Agent for executor", () => {
   const { output } = runScript("pre-tool-enforcer.mjs", { tool_name: "Agent" }, { OMB_AGENT_ROLE: "executor" });
   assertContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "executor Agent");
+});
+
+test("allows Agent for scout (Explorer delegation)", () => {
+  const { output } = runScript("pre-tool-enforcer.mjs", { tool_name: "Agent" }, { OMB_AGENT_ROLE: "scout" });
+  assertNotContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "scout Agent should be allowed");
+});
+
+test("allows Agent for architect (Explorer delegation)", () => {
+  const { output } = runScript("pre-tool-enforcer.mjs", { tool_name: "Agent" }, { OMB_AGENT_ROLE: "architect" });
+  assertNotContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "architect Agent should be allowed");
+});
+
+test("still blocks Agent for explorer (read-only)", () => {
+  const { output } = runScript("pre-tool-enforcer.mjs", { tool_name: "Agent" }, { OMB_AGENT_ROLE: "explorer" });
+  assertContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "explorer Agent should remain blocked");
 });
 
 test("blocks dangerous rm -rf /", () => {
@@ -3935,17 +3950,51 @@ test("session-start skips priority context when file is missing", () => {
   assertNotContains(ctx, "[Priority Context]", "should not have Priority Context when file missing");
 });
 
+// ---- WORKING MEMORY AUTO-INJECTION ----
+
+console.log("\n=== session-start.mjs (Working Memory Injection) ===\n");
+
+test("session-start injects working memory when file exists with entries", () => {
+  resetState();
+  // Create working-memory.md with multiple entries
+  const historyDir = join(TEMP_DIR, ".oh-my-beads", "history");
+  mkdirSync(historyDir, { recursive: true });
+  const wmContent = [
+    "---", "**2025-01-01T00:00:00.000Z**", "First finding about config",
+    "---", "**2025-01-02T00:00:00.000Z**", "Second finding about auth",
+    "---", "**2025-01-03T00:00:00.000Z**", "Third finding about DB",
+  ].join("\n");
+  writeFileSync(join(historyDir, "working-memory.md"), wmContent);
+  const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "startup" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "[Working Memory (Recent)]", "should have Working Memory label");
+  assertContains(ctx, "Third finding about DB", "should include most recent entry");
+  // Cleanup
+  rmSync(join(historyDir, "working-memory.md"), { force: true });
+});
+
+test("session-start skips working memory when file does not exist", () => {
+  resetState();
+  // Ensure no working-memory.md exists
+  rmSync(join(TEMP_DIR, ".oh-my-beads", "history", "working-memory.md"), { force: true });
+  const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "startup" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertNotContains(ctx, "[Working Memory (Recent)]", "should not have Working Memory when file missing");
+});
+
 // ---- REMEMBER TAG PROCESSING ----
 
 console.log("\n=== post-tool-verifier.mjs (Remember Tags) ===\n");
 
-test("<remember priority> writes to priority-context.md (replacing existing)", () => {
+test("<remember priority> appends to priority-context.md instead of replacing", () => {
   resetState();
   writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
   // Ensure directory exists
   mkdirSync(join(TEMP_DIR, ".oh-my-beads"), { recursive: true });
-  // Pre-existing content to verify it gets replaced
-  writeFileSync(join(TEMP_DIR, ".oh-my-beads", "priority-context.md"), "old content");
+  // Pre-existing content in timestamped format
+  writeFileSync(join(TEMP_DIR, ".oh-my-beads", "priority-context.md"), "[2025-01-01T00:00] old important context");
   runScript("post-tool-verifier.mjs", {
     cwd: TEMP_DIR, tool_name: "Bash",
     tool_output: "Some output <remember priority>Critical: Always run migrations before deploy</remember> more output",
@@ -3954,7 +4003,45 @@ test("<remember priority> writes to priority-context.md (replacing existing)", (
   assert(existsSync(pcPath), "priority-context.md should exist");
   const content = readFileSync(pcPath, "utf8");
   assertContains(content, "Critical: Always run migrations before deploy", "should have new priority content");
-  assertNotContains(content, "old content", "should have replaced old content");
+  assertContains(content, "old important context", "should preserve old content (append, not replace)");
+});
+
+test("<remember priority> deduplicates identical entries", () => {
+  resetState();
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
+  mkdirSync(join(TEMP_DIR, ".oh-my-beads"), { recursive: true });
+  // Write initial entry
+  writeFileSync(join(TEMP_DIR, ".oh-my-beads", "priority-context.md"), "[2025-01-01T00:00] Always use snake_case");
+  // Try to add the same content again
+  runScript("post-tool-verifier.mjs", {
+    cwd: TEMP_DIR, tool_name: "Bash",
+    tool_output: "<remember priority>Always use snake_case</remember>",
+  });
+  const content = readFileSync(join(TEMP_DIR, ".oh-my-beads", "priority-context.md"), "utf8");
+  // Count occurrences of the content — should be exactly 1
+  const matches = content.match(/Always use snake_case/g) || [];
+  assert(matches.length === 1, `should have exactly 1 entry, got ${matches.length}`);
+});
+
+test("<remember priority> enforces 500 char budget (oldest entry removed)", () => {
+  resetState();
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
+  mkdirSync(join(TEMP_DIR, ".oh-my-beads"), { recursive: true });
+  // Fill with entries close to 500 char budget
+  const longEntry1 = "[2025-01-01T00:00] " + "A".repeat(200);
+  const longEntry2 = "[2025-01-02T00:00] " + "B".repeat(200);
+  writeFileSync(join(TEMP_DIR, ".oh-my-beads", "priority-context.md"), longEntry1 + "\n" + longEntry2);
+  // Add another entry that would exceed 500 chars
+  runScript("post-tool-verifier.mjs", {
+    cwd: TEMP_DIR, tool_name: "Bash",
+    tool_output: "<remember priority>" + "C".repeat(150) + "</remember>",
+  });
+  const content = readFileSync(join(TEMP_DIR, ".oh-my-beads", "priority-context.md"), "utf8");
+  assert(content.length <= 500, `should be <= 500 chars, got ${content.length}`);
+  // The newest entry should be present
+  assertContains(content, "C".repeat(150), "should contain newest entry");
+  // The oldest entry (A's) should have been removed to make room
+  assertNotContains(content, "A".repeat(200), "oldest entry should be removed to fit budget");
 });
 
 test("<remember> appends to working-memory.md with timestamp", () => {
@@ -4414,6 +4501,248 @@ test("getModelForRole returns default for non-overridden role", () => {
   assert(model === "opus", `architect should default to opus, got ${model}`);
   const workerModel = getModelForRole("worker");
   assert(workerModel === "sonnet", `worker should default to sonnet, got ${workerModel}`);
+});
+
+// ---- SKILL FEEDBACK: POST-TOOL VERIFIER ----
+
+console.log("\n=== post-tool-verifier.mjs (Skill Feedback) ===\n");
+
+test("skill-feedback tag is detected and stored in skill-feedback.json", () => {
+  resetState();
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
+  const feedbackOutput = 'Some analysis done. <skill-feedback name="auth-fix" useful="false">outdated info</skill-feedback> Moving on.';
+  runScript("post-tool-verifier.mjs", {
+    cwd: TEMP_DIR, tool_name: "Bash", tool_output: feedbackOutput,
+  });
+  const feedbackPath = join(STATE_DIR, "skill-feedback.json");
+  assert(existsSync(feedbackPath), "skill-feedback.json should exist");
+  const feedback = JSON.parse(readFileSync(feedbackPath, "utf8"));
+  assert(feedback["auth-fix"], "should have auth-fix entry");
+  assert(feedback["auth-fix"].negativeCount === 1, `negativeCount should be 1, got ${feedback["auth-fix"].negativeCount}`);
+  assert(feedback["auth-fix"].reason === "outdated info", `reason should be 'outdated info', got ${feedback["auth-fix"].reason}`);
+  assert(feedback["auth-fix"].lastNegative, "should have lastNegative timestamp");
+});
+
+test("skill-feedback increments negativeCount on repeated feedback", () => {
+  resetState();
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
+  // Pre-seed with existing feedback
+  writeFileSync(
+    join(STATE_DIR, "skill-feedback.json"),
+    JSON.stringify({ "db-fix": { negativeCount: 2, lastNegative: "2025-01-01T00:00:00.000Z", reason: "old" } })
+  );
+  const feedbackOutput = '<skill-feedback name="db-fix" useful="false">still outdated</skill-feedback>';
+  runScript("post-tool-verifier.mjs", {
+    cwd: TEMP_DIR, tool_name: "Bash", tool_output: feedbackOutput,
+  });
+  const feedback = JSON.parse(readFileSync(join(STATE_DIR, "skill-feedback.json"), "utf8"));
+  assert(feedback["db-fix"].negativeCount === 3, `negativeCount should be 3, got ${feedback["db-fix"].negativeCount}`);
+  assert(feedback["db-fix"].reason === "still outdated", `reason should update to 'still outdated'`);
+});
+
+// ---- SKILL INJECTOR: FEEDBACK-BASED SUPPRESSION ----
+
+console.log("\n=== skill-injector.mjs (Feedback Suppression) ===\n");
+
+test("skill with 3+ negative feedback is suppressed", () => {
+  resetState();
+  const skillsDir = join(TEMP_DIR, ".oh-my-beads", "skills");
+  mkdirSync(skillsDir, { recursive: true });
+  writeFileSync(join(skillsDir, "bad-skill.md"), `---
+name: bad-skill
+description: A skill that keeps being reported
+triggers:
+  - suppress-test
+source: project
+tags: []
+---
+# Problem
+Bad advice.
+
+# Solution
+Wrong solution.
+`);
+  // Write feedback indicating 3 negatives
+  writeFileSync(
+    join(STATE_DIR, "skill-feedback.json"),
+    JSON.stringify({ "bad-skill": { negativeCount: 3, lastNegative: "2025-01-01T00:00:00.000Z", reason: "unhelpful" } })
+  );
+  const { output } = runScript("skill-injector.mjs", { query: "fix the suppress-test issue", cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  // Skill should be suppressed (not injected)
+  assert(!parsed?.hookSpecificOutput?.additionalContext, "skill with 3+ negatives should be suppressed");
+  rmSync(skillsDir, { recursive: true, force: true });
+});
+
+test("skill with <3 negative feedback is still injected", () => {
+  resetState();
+  const skillsDir = join(TEMP_DIR, ".oh-my-beads", "skills");
+  mkdirSync(skillsDir, { recursive: true });
+  writeFileSync(join(skillsDir, "ok-skill.md"), `---
+name: ok-skill
+description: A skill with some negative feedback
+triggers:
+  - oktest
+source: project
+tags: []
+---
+# Problem
+Minor issue.
+
+# Solution
+Reasonable solution.
+`);
+  // Write feedback with only 2 negatives (below threshold)
+  writeFileSync(
+    join(STATE_DIR, "skill-feedback.json"),
+    JSON.stringify({ "ok-skill": { negativeCount: 2, lastNegative: "2025-01-01T00:00:00.000Z", reason: "sometimes wrong" } })
+  );
+  const { output } = runScript("skill-injector.mjs", { query: "fix the oktest issue", cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "ok-skill", "skill with <3 negatives should still be injected");
+  rmSync(skillsDir, { recursive: true, force: true });
+});
+
+test("injection format includes feedback hint", () => {
+  resetState();
+  const skillsDir = join(TEMP_DIR, ".oh-my-beads", "skills");
+  mkdirSync(skillsDir, { recursive: true });
+  writeFileSync(join(skillsDir, "hint-test.md"), `---
+name: hint-test
+description: Test feedback hint in injection
+triggers:
+  - hintcheck
+source: project
+tags: []
+---
+# Problem
+Test problem.
+
+# Solution
+Test solution.
+`);
+  const { output } = runScript("skill-injector.mjs", { query: "fix the hintcheck issue", cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "skill-feedback", "should include feedback hint");
+  assertContains(ctx, 'name="hint-test"', "should include skill name in feedback hint");
+  assertContains(ctx, 'useful="false"', "should include useful=false template");
+  rmSync(skillsDir, { recursive: true, force: true });
+});
+
+// ---- SKILL INJECTOR: WORD-BOUNDARY MATCHING ----
+
+console.log("\n=== skill-injector.mjs (Word-Boundary Matching) ===\n");
+
+test("word-boundary matching: trigger 'auth' matches 'auth module' but not 'authorize'", () => {
+  resetState();
+  const skillsDir = join(TEMP_DIR, ".oh-my-beads", "skills");
+  mkdirSync(skillsDir, { recursive: true });
+  writeFileSync(join(skillsDir, "wb-test.md"), `---
+name: wb-test
+description: Word boundary test
+triggers:
+  - auth
+source: project
+tags: []
+---
+# Problem
+Auth boundary test.
+
+# Solution
+Boundary solution.
+`);
+  // "auth module" — trigger "auth" should match at word boundary
+  const { output: out1 } = runScript("skill-injector.mjs", { query: "fix the auth module", cwd: TEMP_DIR });
+  const parsed1 = parseOutput(out1);
+  assertContains(parsed1?.hookSpecificOutput?.additionalContext || "", "wb-test", "trigger 'auth' should match 'auth module'");
+
+  // Reset dedup for next test
+  rmSync(join(STATE_DIR, "injected-skills.json"), { force: true });
+
+  // "authorize" — trigger "auth" should NOT match (not a word boundary)
+  const { output: out2 } = runScript("skill-injector.mjs", { query: "fix the authorize function", cwd: TEMP_DIR });
+  const parsed2 = parseOutput(out2);
+  assert(!parsed2?.hookSpecificOutput?.additionalContext, "trigger 'auth' should NOT match 'authorize'");
+  rmSync(skillsDir, { recursive: true, force: true });
+});
+
+test("multi-word triggers score higher than single-word", () => {
+  resetState();
+  const skillsDir = join(TEMP_DIR, ".oh-my-beads", "skills");
+  mkdirSync(skillsDir, { recursive: true });
+  // Skill A: single-word trigger match → +10
+  writeFileSync(join(skillsDir, "single-word.md"), `---
+name: single-word
+description: Single word trigger
+triggers:
+  - token
+source: project
+tags: []
+---
+# Problem
+Single word problem.
+
+# Solution
+Single word solution.
+`);
+  // Skill B: multi-word trigger match → +15
+  writeFileSync(join(skillsDir, "multi-word.md"), `---
+name: multi-word
+description: Multi word trigger
+triggers:
+  - auth token
+source: project
+tags: []
+---
+# Problem
+Multi word problem.
+
+# Solution
+Multi word solution.
+`);
+  const { output } = runScript("skill-injector.mjs", { query: "fix the auth token issue", cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  const posMulti = ctx.indexOf("multi-word");
+  const posSingle = ctx.indexOf("single-word");
+  assert(posMulti !== -1, "multi-word skill should be present");
+  assert(posSingle !== -1, "single-word skill should be present");
+  assert(posMulti < posSingle, `multi-word (pos ${posMulti}) should appear before single-word (pos ${posSingle}) due to higher score`);
+  rmSync(skillsDir, { recursive: true, force: true });
+});
+
+test("very short triggers require exact word match", () => {
+  resetState();
+  const skillsDir = join(TEMP_DIR, ".oh-my-beads", "skills");
+  mkdirSync(skillsDir, { recursive: true });
+  writeFileSync(join(skillsDir, "short-trigger.md"), `---
+name: short-trigger
+description: Short trigger test
+triggers:
+  - go
+source: project
+tags: []
+---
+# Problem
+Go-specific problem.
+
+# Solution
+Go-specific solution.
+`);
+  // "go" should match as exact word in "use go modules"
+  const { output: out1 } = runScript("skill-injector.mjs", { query: "use go modules", cwd: TEMP_DIR });
+  const parsed1 = parseOutput(out1);
+  assertContains(parsed1?.hookSpecificOutput?.additionalContext || "", "short-trigger", "short trigger 'go' should match exact word 'go'");
+
+  // Reset dedup
+  rmSync(join(STATE_DIR, "injected-skills.json"), { force: true });
+
+  // "go" should NOT match in "google" (not a word boundary)
+  const { output: out2 } = runScript("skill-injector.mjs", { query: "fix the google api", cwd: TEMP_DIR });
+  const parsed2 = parseOutput(out2);
+  assert(!parsed2?.hookSpecificOutput?.additionalContext, "short trigger 'go' should NOT match 'google'");
+  rmSync(skillsDir, { recursive: true, force: true });
 });
 
 // ============================================================

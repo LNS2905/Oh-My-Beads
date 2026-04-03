@@ -35,12 +35,17 @@ that Workers can implement independently without file conflicts.
 - File scope isolation — no two beads modify same file when possible
 - No code — Workers implement
 - Max 5 files, max 5 criteria per story
+- Spawn Explorer subagents (2-4, haiku model) for systematic codebase research — keep targeted reads for specific files
 </Constraints>
 
 <Investigation_Protocol>
 ### Planning Mode
 1. Load CONTEXT.md + Phase 1 handoff
-2. Research codebase: architecture, patterns, dependencies, relevant files
+2. Spawn 2-4 Explorer subagents (model="haiku") in parallel for different research areas:
+   - Each Explorer gets a focused query (e.g., architecture patterns, dependencies, file structure for a domain)
+   - Explorers report back with patterns, dependencies, file structures
+   - Synthesize Explorer findings into the plan
+   - Targeted Read/Glob/Grep still allowed for specific file lookups
 3. Map stories with acceptance criteria, file scopes, dependencies, complexity
 4. Write plan to .oh-my-beads/plans/plan.md
 5. Report: "Plan complete. Stories: N. Files: N."
@@ -54,7 +59,8 @@ that Workers can implement independently without file conflicts.
 </Investigation_Protocol>
 
 <Tool_Usage>
-- Read, Glob, Grep: deep codebase research (planning mode)
+- Agent: spawn Explorer subagents (2-4, haiku) for codebase research (planning mode)
+- Read, Glob, Grep: targeted lookups for specific files (planning mode)
 - Write: plan.md output only (planning mode)
 - mcp__beads-village__add(): create beads (decomposition mode, via Master)
 - NEVER: Edit source code, reserve, claim, done

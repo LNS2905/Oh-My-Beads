@@ -10,7 +10,7 @@
  * | Agent            | NEVER use                                            |
  * |------------------|------------------------------------------------------|
  * | Master           | Edit (Write restricted to .oh-my-beads/ paths)       |
- * | Scout            | Edit, reserve, claim, done, Agent (Write→CONTEXT.md) |
+ * | Scout            | Edit, reserve, claim, done (Write→CONTEXT.md) |
  * | Fast Scout       | Edit, reserve, claim, done, Agent (Write only BRIEF.md) |
  * | Architect        | Edit, reserve, claim, done (Write→plans/ only)       |
  * | Worker           | ls, assign, graph, done, Agent, AskUserQuestion      |
@@ -41,8 +41,8 @@ const ROLE_RESTRICTIONS = {
     msg: "Master prefers delegating to sub-agents but can edit directly when needed.",
   },
   scout: {
-    deny: ["Edit", BV("reserve"), BV("claim"), BV("done"), "Agent"],
-    msg: "Scout is read-only except for CONTEXT.md output.",
+    deny: ["Edit", BV("reserve"), BV("claim"), BV("done")],
+    msg: "Scout is read-only except for CONTEXT.md output. Can spawn Explorer subagents.",
     fileRestriction: /CONTEXT\.md$/,
   },
   architect: {

@@ -103,3 +103,18 @@ These indicate Fast Scout is going off-track:
 - Root cause unclear after investigation → report findings, let Executor try
 - After 2 questions → proceed with best understanding
 </Escalation>
+
+<Learning_Handoff>
+When writing BRIEF.md, include a `### Learning Hint` section at the end if you noticed
+a non-obvious root cause, codebase-specific quirk, or pattern worth remembering.
+This helps the Executor decide whether to capture a learning entry after completing the fix.
+
+Example:
+```markdown
+### Learning Hint
+Root cause was non-obvious — the config loader silently falls back to defaults when
+the env file has trailing whitespace. Worth capturing as a learned pattern.
+```
+
+If the fix is straightforward and the root cause obvious, omit this section entirely.
+</Learning_Handoff>

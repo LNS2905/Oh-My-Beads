@@ -199,19 +199,46 @@ process.stdin.on("end", async () => {
 
   // --- <remember> tag processing ---
   // When tool output contains <remember priority>content</remember>,
-  // write content to .oh-my-beads/priority-context.md (replacing existing).
+  // append (with dedup) to .oh-my-beads/priority-context.md.
   // When output contains <remember>content</remember>,
   // append to .oh-my-beads/history/working-memory.md with timestamp.
   try {
     const rawOutput = typeof toolOutput === "string" ? toolOutput : JSON.stringify(toolOutput);
-    // Match <remember priority>...</remember> (priority context — replaces file)
+    // Match <remember priority>...</remember> (priority context — append with dedup)
     const priorityMatch = rawOutput.match(/<remember\s+priority>([\s\S]*?)<\/remember>/);
     if (priorityMatch) {
-      const content = priorityMatch[1].trim().substring(0, 500); // Max 500 chars
-      if (content.length > 0) {
+      const newContent = priorityMatch[1].trim();
+      if (newContent.length > 0) {
         const artifactsDir = join(directory, ".oh-my-beads");
         mkdirSync(artifactsDir, { recursive: true });
-        writeFileSync(join(artifactsDir, "priority-context.md"), content);
+        const pcPath = join(artifactsDir, "priority-context.md");
+        const existing = existsSync(pcPath) ? readFileSync(pcPath, "utf8").trim() : "";
+        // Parse existing entries (format: [YYYY-MM-DDTHH:MM] content)
+        const existingEntries = existing
+          ? existing.split("\n").filter(l => l.trim())
+          : [];
+        // Deduplicate: check if newContent already exists in any entry
+        const isDuplicate = existingEntries.some(entry => {
+          // Strip timestamp prefix to compare content
+          const contentPart = entry.replace(/^\[[^\]]*\]\s*/, "");
+          return contentPart === newContent;
+        });
+        if (!isDuplicate) {
+          const now = new Date();
+          const ts = now.toISOString().substring(0, 16); // YYYY-MM-DDTHH:MM
+          const newEntry = `[${ts}] ${newContent}`;
+          let entries = [...existingEntries, newEntry];
+          // Enforce 500 char total budget: remove oldest entries until under budget
+          while (entries.join("\n").length > 500 && entries.length > 1) {
+            entries.shift(); // Remove oldest entry
+          }
+          // If a single entry exceeds 500 chars, truncate it
+          let final = entries.join("\n");
+          if (final.length > 500) {
+            final = final.substring(0, 500);
+          }
+          writeFileSync(pcPath, final);
+        }
       }
     }
     // Match <remember>...</remember> (working memory — appends)
@@ -233,7 +260,29 @@ process.stdin.on("end", async () => {
     }
   } catch { /* best effort — don't block tool use */ }
 
-  // Generate advisory context if failure detected
+  // --- <skill-feedback> tag processing ---
+  // When tool output contains <skill-feedback name="slug" useful="false">reason</skill-feedback>,
+  // record negative feedback in skill-feedback.json to suppress unhelpful skills.
+  try {
+    const rawForFeedback = typeof toolOutput === "string" ? toolOutput : JSON.stringify(toolOutput);
+    const feedbackMatches = rawForFeedback.matchAll(/<skill-feedback\s+name="([^"]+)"\s+useful="false">([\s\S]*?)<\/skill-feedback>/g);
+    for (const match of feedbackMatches) {
+      const slug = match[1].trim();
+      const reason = match[2].trim();
+      if (slug.length > 0) {
+        const projectStateRoot = getProjectStateRoot(directory);
+        const feedbackPath = join(projectStateRoot, "skill-feedback.json");
+        let feedback = readJson(feedbackPath) || {};
+        if (!feedback[slug]) {
+          feedback[slug] = { negativeCount: 0, lastNegative: null, reason: "" };
+        }
+        feedback[slug].negativeCount = (feedback[slug].negativeCount || 0) + 1;
+        feedback[slug].lastNegative = new Date().toISOString();
+        feedback[slug].reason = reason || feedback[slug].reason;
+        writeJsonAtomic(feedbackPath, feedback);
+      }
+    }
+  } catch { /* best effort — don't block tool use */ }
   // Failure messages are warnings — suppressed at quiet level 2
   const quiet = getQuietLevel();
   if (failureDetected) {

@@ -186,6 +186,28 @@ process.stdin.on("end", () => {
     }
   } catch { /* best effort — don't block session start */ }
 
+  // Load working memory — last 5 entries (project-level, committed to repo)
+  try {
+    const wmPath = join(cwd, ".oh-my-beads", "history", "working-memory.md");
+    if (existsSync(wmPath)) {
+      const raw = readFileSync(wmPath, "utf8").trim();
+      if (raw.length > 0) {
+        // Split entries by separator lines (entries start with \n---\n<timestamp>)
+        const entries = raw.split(/\n---\n/).filter(e => e.trim());
+        const recent = entries.slice(-5).join("\n---\n");
+        // Cap at 800 chars total
+        const content = recent.length > 800 ? recent.substring(recent.length - 800) : recent;
+        // Insert after Priority Context but before Project Memory
+        const pcIdx = parts.findIndex(p => p.startsWith("[Priority Context]"));
+        if (pcIdx >= 0) {
+          parts.splice(pcIdx + 1, 0, `[Working Memory (Recent)]\n${content}`);
+        } else {
+          parts.unshift(`[Working Memory (Recent)]\n${content}`);
+        }
+      }
+    }
+  } catch { /* best effort — don't block session start */ }
+
   // Enhanced plugin banner (compact, max 5 lines)
   let bannerLine = `oh-my-beads ${version} loaded.`;
 

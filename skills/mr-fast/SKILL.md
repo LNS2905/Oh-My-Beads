@@ -187,7 +187,67 @@ Mr.Fast complete.
 - Mode: mr.fast | Total time: <elapsed>
 ```
 
-### C2. Cleanup
+### C2. Post-Execution Learning (Mini-Compounding)
+
+After the Executor reports results, assess whether the fix is worth learning from.
+This must be lightweight — under 5 seconds of agent time, not a full compounding analysis.
+
+**Skip learning entirely if:**
+- The fix was a trivial typo, formatting, or obvious one-liner
+- No debugging or investigation was needed
+- The root cause was immediately obvious from the error message
+
+**Write a brief learnings entry if:**
+- The root cause was non-obvious or required investigation
+- A pattern emerged (specific error → specific fix)
+- The fix involved a gotcha, edge case, or codebase-specific quirk
+- Debugging steps were needed to find the issue
+
+**Learnings entry** — write to `.oh-my-beads/history/learnings/YYYYMMDD-fast-<slug>.md`:
+
+```yaml
+---
+type: fast-fix
+date: YYYY-MM-DD
+domain: <detected domain tag — e.g., api, auth, testing, config, build, ui>
+---
+## Pattern
+<1-2 sentence description of the root cause or non-obvious behavior>
+
+## Fix
+<1-2 sentence description of what was done to resolve it>
+
+## Remember
+<1 sentence takeaway for future similar issues>
+```
+
+**Skill promotion** — if the pattern is clearly reusable (specific error message → specific fix),
+also promote to `.oh-my-beads/skills/<slug>.md` using the learned skill format:
+
+```yaml
+---
+name: <slug>
+description: <one-line — what goes wrong and how to fix it>
+triggers:
+  - <exact error message fragment>
+  - <file or module name>
+  - <symptom keyword>
+source: learned
+tags:
+  - <domain tag>
+---
+
+# Problem
+<What goes wrong — error message, file, conditions>
+
+# Solution
+<The exact fix — which file, what change, key insight>
+```
+
+Only promote when there is a concrete, repeatable error-to-fix mapping.
+Do not promote vague or overly general patterns.
+
+### C3. Cleanup
 
 Update session state: `active: false`, `current_phase: "fast_complete"`
 Release any remaining beads_village locks.

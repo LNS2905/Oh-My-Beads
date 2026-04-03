@@ -107,7 +107,7 @@ Check `.claude/settings.json` for existing hook entries.
 | Stop | `context-guard-stop.mjs` AND `persistent-mode.cjs` |
 | PreCompact | `pre-compact.mjs` |
 | SubagentStart | `subagent-tracker.mjs` |
-| SubagentStop | `subagent-tracker.mjs` AND `verify-deliverables.mjs` |
+| SubagentStop | `subagent-stop.mjs` |
 | SessionEnd | `session-end.mjs` |
 
 **If all hooks present:** CHECK hooks ... PASS (N/N events wired)

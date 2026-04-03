@@ -246,21 +246,19 @@ node scripts/state-tools/state-bridge.cjs status [--session-id ID]
 
 Run tests: `node test/run-tests.mjs`
 
-331 tests across 55+ suites covering:
+339 tests across 55+ suites covering:
 - keyword-detector (10 tests): keyword detection, informational filtering (±80 char window), cancel with signal file, CC prompt field
 - persistent-mode (15 tests): block/allow, circuit breaker, staleness, CC-format stop hook, cancel signal TTL, awaiting_confirmation
 - post-tool-verifier (8 tests): failure detection (word-boundary patterns), file tracking, counters
 - pre-tool-enforcer (15 tests): all 11 roles, Bash safety, file restrictions
 - state-bridge (7 tests): CRUD operations, list, status
-- verify-deliverables (5 tests): scout/architect/worker/unknown role checks
-- subagent-tracker (2 tests): start/stop lifecycle
+- subagent-tracker (1 test): start lifecycle
 - pre-compact (4 tests): checkpoint writing, handoff creation, systemMessage re-injection
 - session-start post-compaction (4 tests): auto-resume from checkpoint, handoff loading, startup modes
 - session-start first-run detection (3 tests): first-run banner, update banner, no banner
 - keyword-detector Mr.Fast (8 tests): mr.fast/mrfast detection, mr.beads, cancel, session state
 - persistent-mode Mr.Fast (3 tests): fast_scout/fast_execution/fast_complete phase handling
 - pre-tool-enforcer Mr.Fast (4 tests): fast-scout role restrictions
-- verify-deliverables Mr.Fast (1 test): fast-scout verification without CONTEXT.md
 - pre-tool-enforcer Audit (13 tests): file restrictions, Bash blocklist expansions, over-blocking prevention
 - pre-tool-enforcer Role Detection (4 tests): prompt text does NOT trigger roles, env var priority
 - prompt-leverage unit (13 tests): task detection, intensity inference, framework blocks, mode capping
@@ -360,7 +358,7 @@ Run tests: `node test/run-tests.mjs`
 ## Commands
 
 ```bash
-# Run tests (331 tests, all must pass)
+# Run tests (339 tests, all must pass)
 node test/run-tests.mjs
 
 # Manual keyword test

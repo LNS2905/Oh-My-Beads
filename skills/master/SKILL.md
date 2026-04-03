@@ -379,11 +379,19 @@ Skip Phase 0 and Phase 1 entirely. Jump to Phase 2 with inline planning:
    Verdicts: PASS → `done()` / MINOR → `done()` with notes / FAIL → re-spawn Worker.
 
    **Phase 6.5: Feature-Level Full Review**
-   After ALL per-bead reviews for the current phase pass, spawn Reviewer in full-review mode:
+   After ALL per-bead reviews for the current phase pass, spawn Reviewer in full-review mode.
+
+   Before spawning, read project memory for known build commands:
+   ```
+   Read ~/.oh-my-beads/projects/{hash}/project-memory.json
+   Extract build.test, build.build, build.lint fields (if available)
+   ```
+
+   Include build commands in the Reviewer spawn prompt so it doesn't have to guess:
    ```
    Agent(
      description="Full-review: feature-level quality gate",
-     prompt="<oh-my-beads:reviewer skill>\n\nMODE: full-review\n\n## CONTEXT.md\n<content>\n\n## plan.md\n<content>\n\n## Git Diff\n<all changes>",
+     prompt="<oh-my-beads:reviewer skill>\n\nMODE: full-review\n\n## Build Commands\ntest: <cmd from project-memory or 'unknown'>\nbuild: <cmd from project-memory or 'unknown'>\nlint: <cmd from project-memory or 'unknown'>\n\n## CONTEXT.md\n<content>\n\n## plan.md\n<content>\n\n## Git Diff\n<all changes>",
      model="sonnet"
    )
    ```

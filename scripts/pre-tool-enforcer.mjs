@@ -37,8 +37,9 @@ const BV = (name) => `mcp__beads-village__${name}`;
 
 const ROLE_RESTRICTIONS = {
   master: {
-    deny: [],
-    msg: "Master prefers delegating to sub-agents but can edit directly when needed.",
+    deny: ["Edit", "MultiEdit"],
+    msg: "Master NEVER edits source code directly — delegate to Workers. Write is allowed only for .oh-my-beads/ state/plan files.",
+    fileRestriction: /(?:^|[/\\])\.oh-my-beads[/\\]/,
   },
   scout: {
     deny: ["Edit", BV("reserve"), BV("claim"), BV("done")],

@@ -22,6 +22,7 @@ import { execFileSync } from "child_process";
 import { getSystemRoot, getProjectStateRoot, resolveHandoffsDir, ensureRuntimeDirs, readJsonSafe } from "./state-tools/resolve-state-dir.mjs";
 import { readJson, hookOutput as _hookOutput } from "./helpers.mjs";
 import { loadMemory, needsRescan, rescan, saveMemory, formatSummary } from "./project-memory.mjs";
+import { loadConfig, DEFAULT_MODELS } from "./config.mjs";
 
 const PLUGIN_VERSION = "v1.2.0";
 
@@ -229,6 +230,20 @@ process.stdin.on("end", () => {
   parts.push(bannerLine);
   parts.push(`Modes: Mr.Beads ('omb') | Mr.Fast ('mr.fast') | Cancel: 'cancel omb'`);
 
+  // Inject model config overrides if custom config exists
+  try {
+    const config = loadConfig();
+    const overrides = [];
+    for (const [role, model] of Object.entries(config.models)) {
+      if (model !== DEFAULT_MODELS[role]) {
+        overrides.push(`${role}=${model}`);
+      }
+    }
+    if (overrides.length > 0) {
+      parts.push(`[Model Config] Custom model overrides active: ${overrides.join(", ")}`);
+    }
+  } catch { /* best effort */ }
+
   // Post-compaction auto-resume: load checkpoint + handoff
   if (source === "compact") {
     const checkpoint = readJson(CHECKPOINT_FILE);
@@ -284,7 +299,7 @@ process.stdin.on("end", () => {
     if (checkpoint || handoff) {
       parts.push(
         `\nRESUME STEPS:` +
-        `\n1. Read .oh-my-beads/state/session.json for current phase` +
+        `\n1. Run: node scripts/state-tools/state-bridge.cjs status (for current phase)` +
         `\n2. Read AGENTS.md for workflow rules` +
         `\n3. Check beads_village ls(status="ready") for next work` +
         `\n4. Continue from the phase indicated above`

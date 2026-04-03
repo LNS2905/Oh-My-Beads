@@ -70,9 +70,9 @@ If ANY gate fails, do NOT create the skill file. Log the skip reason and move on
    .oh-my-beads/history/<feature>/CONTEXT.md     — locked decisions
    .oh-my-beads/plans/plan.md                    — implementation plan
    .oh-my-beads/history/<feature>/WRAP-UP.md     — Phase 7 summary (if exists)
-   .oh-my-beads/state/session.json               — runtime state
-   .oh-my-beads/state/tool-tracking.json         — files modified, failures
-   .oh-my-beads/state/subagent-tracking.json     — agent lifecycle
+   ~/.oh-my-beads/projects/{hash}/session.json    — runtime state (system-level)
+   ~/.oh-my-beads/projects/{hash}/tool-tracking.json — files modified, failures (system-level)
+   ~/.oh-my-beads/projects/{hash}/subagent-tracking.json — agent lifecycle (system-level)
    ```
 
    Also run:
@@ -110,7 +110,7 @@ Fill this table for each pattern found:
 Be specific. Name actual files, functions, and modules.
 If fewer than 2 patterns found, state that explicitly.
 
-Write to: /tmp/omb-compounding-patterns.md",
+Write to: /tmp/omb-compounding-{feature-slug}-patterns.md",
      model="sonnet"
    )
    ```
@@ -132,7 +132,7 @@ Fill this table for each decision:
 |----------|-------------|----------------------|---------|-----|----------------|
 | <what was decided> | <what was chosen> | <what was rejected> | <how it played out> | GOOD_CALL / BAD_CALL / SURPRISE / TRADEOFF | <imperative advice> |
 
-Write to: /tmp/omb-compounding-decisions.md",
+Write to: /tmp/omb-compounding-{feature-slug}-decisions.md",
      model="sonnet"
    )
    ```
@@ -158,7 +158,7 @@ Fill this table for each failure:
 
 If the feature ran smoothly, write that honestly. Do not fabricate failures.
 
-Write to: /tmp/omb-compounding-failures.md",
+Write to: /tmp/omb-compounding-{feature-slug}-failures.md",
      model="sonnet"
    )
    ```
@@ -201,7 +201,7 @@ Produce a structured comparison:
 - Actual exit state: <from WRAP-UP.md and reality>
 - Gap: <what differs>
 
-Write to: /tmp/omb-compounding-exit-audit.md",
+Write to: /tmp/omb-compounding-{feature-slug}-exit-audit.md",
      model="sonnet"
    )
    ```

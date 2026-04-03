@@ -40,7 +40,7 @@ const FAILURE_KEYWORDS = [
 const CODE_TOOLS = new Set(["Write", "Edit"]);
 const HOT_PATH_TOOLS = new Set(["Read", "Edit", "Write", "MultiEdit"]);
 const BASH_TOOL = "Bash";
-const MEMORY_SAVE_INTERVAL = 10; // Save project memory every N tool calls
+// Memory is now saved on every mutation (dirty flag). writeJsonAtomic is fast (tmp + rename).
 
 // --- Helpers ---
 const hookOutput = (additionalContext) => {
@@ -171,6 +171,23 @@ process.stdin.on("end", async () => {
       }
     }
 
+    // Track hot paths from Bash tool commands (extract file paths from command string)
+    if (toolName === BASH_TOOL) {
+      const bashCmd = data.tool_input?.command ?? data.toolInput?.command ?? "";
+      if (bashCmd) {
+        // Match file paths with common code extensions (avoid node_modules, /tmp, etc.)
+        const filePathPattern = /(?:^|\s)((?:\.\/|\.\.\/|\/)?(?:[\w./-]+\/)*[\w.-]+\.(?:ts|js|mjs|cjs|py|go|rs|md|json|yaml|yml|tsx|jsx|css|scss|html|vue|svelte|rb|java|kt|swift|c|cpp|h|hpp))\b/g;
+        let match;
+        while ((match = filePathPattern.exec(bashCmd)) !== null) {
+          const fp = match[1];
+          // Skip non-project paths
+          if (fp.includes("node_modules") || fp.startsWith("/tmp") || fp.startsWith("/dev/") || fp.startsWith("/proc/") || fp.startsWith("/sys/")) continue;
+          addHotPath(memory, fp, "bash-access");
+          memoryDirty = true;
+        }
+      }
+    }
+
     // Learn build/test commands from Bash output
     if (toolName === BASH_TOOL && toolResult) {
       const bashInput = data.tool_input?.command ?? data.toolInput?.command ?? "";
@@ -191,8 +208,8 @@ process.stdin.on("end", async () => {
       }
     }
 
-    // Save memory (throttled to max once per MEMORY_SAVE_INTERVAL tool calls)
-    if (memoryDirty && tracking.tool_count % MEMORY_SAVE_INTERVAL === 0) {
+    // Save memory on every mutation — writeJsonAtomic is fast (tmp + rename)
+    if (memoryDirty) {
       saveMemory(projectStateRoot, memory);
     }
   } catch { /* best effort — don't block tool use */ }

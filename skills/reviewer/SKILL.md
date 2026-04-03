@@ -115,8 +115,12 @@ with a broken build.
 
 After all per-bead reviews pass and before entering full-review mode:
 
-1. Run the project's full build+test suite
-2. Run lint and type-check if available
+**Note:** If project memory is available in the spawn prompt (via `## Build Commands` section),
+use its `test`, `build`, and `lint` commands instead of guessing. This avoids wasted attempts
+with wrong commands and speeds up batch verification.
+
+1. Run the project's full build+test suite (prefer project memory commands if available)
+2. Run lint and type-check if available (prefer project memory commands if available)
 3. If failures detected:
    - Identify which bead's changes caused the failure
    - Re-spawn Worker with failure context

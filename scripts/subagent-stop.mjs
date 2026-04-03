@@ -3,8 +3,7 @@
 /**
  * oh-my-beads consolidated SubagentStop handler.
  *
- * Merges subagent-tracker (stop handling) and verify-deliverables into
- * a single script for the SubagentStop hook. Responsibilities:
+ * Handles all SubagentStop hook responsibilities:
  *
  * 1. Update subagent-tracking.json (mark agent as stopped)
  * 2. Verify deliverables by role (Scout → CONTEXT.md, Architect → plan, etc.)
@@ -43,7 +42,7 @@ const ROLE_DELIVERABLES = {
   },
 };
 
-// --- Detailed deliverable checks (from verify-deliverables) ---
+// --- Detailed deliverable checks ---
 function resolveStateFile(dir, filename) {
   const systemPath = join(getProjectStateRoot(dir), filename);
   if (existsSync(systemPath)) return systemPath;

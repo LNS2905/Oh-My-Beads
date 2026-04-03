@@ -199,15 +199,31 @@ export function scoreSkill(skill, prompt) {
 
 /**
  * Load previously injected skill names for this session.
+ * Session-scoped: if the session's started_at differs from the stored one,
+ * treat as a fresh session (all skills eligible for re-injection).
  */
 function loadInjectedSkills(stateDir) {
   const filePath = join(stateDir, "injected-skills.json");
   const data = readJson(filePath);
-  return data?.skills || [];
+  if (!data?.skills || !Array.isArray(data.skills)) return [];
+
+  // Session-scoped dedup: check if the current session matches the stored one
+  const sessionFile = join(stateDir, "session.json");
+  const session = readJson(sessionFile);
+  const currentStartedAt = session?.started_at || null;
+  const storedStartedAt = data.session_started_at || null;
+
+  // If session changed (different started_at), reset dedup
+  if (currentStartedAt && storedStartedAt && currentStartedAt !== storedStartedAt) {
+    return [];
+  }
+
+  return data.skills;
 }
 
 /**
  * Save injected skill names for this session, with per-skill tracking.
+ * Includes session_started_at for session-scoped dedup.
  */
 function saveInjectedSkills(stateDir, skillNames, newlyInjected) {
   const filePath = join(stateDir, "injected-skills.json");
@@ -223,8 +239,14 @@ function saveInjectedSkills(stateDir, skillNames, newlyInjected) {
     tracking[name].lastInjected = new Date().toISOString();
   }
 
+  // Read current session's started_at for session-scoped dedup
+  const sessionFile = join(stateDir, "session.json");
+  const session = readJson(sessionFile);
+  const sessionStartedAt = session?.started_at || null;
+
   writeJsonAtomic(filePath, {
     skills: skillNames,
+    session_started_at: sessionStartedAt,
     tracking,
     updated_at: new Date().toISOString(),
   });
@@ -241,11 +263,28 @@ export function loadSkillFeedback(stateDir) {
 
 /**
  * Check if a skill is suppressed due to negative feedback.
+ * Applies time-based decay: if the last negative feedback was more than 14 days ago,
+ * halve the negativeCount (round down). This allows skills to recover if the codebase changes.
  */
 function isSkillSuppressed(feedback, skillName) {
   const entry = feedback[skillName];
   if (!entry) return false;
-  return (entry.negativeCount || 0) >= NEGATIVE_FEEDBACK_THRESHOLD;
+  let count = entry.negativeCount || 0;
+
+  // Time-based decay: halve negativeCount if last negative was >14 days ago
+  if (entry.lastNegative && count >= NEGATIVE_FEEDBACK_THRESHOLD) {
+    const lastNeg = new Date(entry.lastNegative).getTime();
+    const now = Date.now();
+    const fourteenDaysMs = 14 * 24 * 60 * 60 * 1000;
+    if (now - lastNeg > fourteenDaysMs) {
+      count = Math.floor(count / 2);
+      // Persist the decayed count back to the feedback object (in-memory only;
+      // will be saved on next feedback write)
+      entry.negativeCount = count;
+    }
+  }
+
+  return count >= NEGATIVE_FEEDBACK_THRESHOLD;
 }
 
 /**

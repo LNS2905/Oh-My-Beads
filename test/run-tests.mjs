@@ -4,7 +4,7 @@
  * oh-my-beads comprehensive test harness.
  *
  * Simulates hook invocations by piping JSON to scripts and asserting outputs.
- * Also tests the state bridge CLI and verify-deliverables.
+ * Also tests the state bridge CLI.
  *
  * Usage: node test/run-tests.mjs
  */
@@ -520,9 +520,9 @@ test("blocks Write for reviewer", () => {
   assert(parsed?.hookSpecificOutput?.permissionDecision === "deny", "should use permissionDecision: deny for engine enforcement");
 });
 
-test("allows Edit for master (restricted to .oh-my-beads/)", () => {
+test("blocks Edit for master (engine-level deny)", () => {
   const { output } = runScript("pre-tool-enforcer.mjs", { tool_name: "Edit" }, { OMB_AGENT_ROLE: "master" });
-  assertNotContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "master Edit");
+  assertContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "master Edit blocked");
 });
 
 test("allows Read for reviewer", () => {
@@ -662,59 +662,6 @@ test("write with --data merges JSON", () => {
   assert(result?.data?.failure_count === 5, "failure_count");
 });
 
-// ---- VERIFY DELIVERABLES ----
-
-console.log("\n=== verify-deliverables.mjs ===\n");
-
-test("scout verification fails without CONTEXT.md", () => {
-  resetState();
-  const { output } = runScript("verify-deliverables.mjs", JSON.stringify({
-    agent_id: "scout-1", role: "scout", directory: TEMP_DIR,
-  }));
-  const parsed = parseOutput(output);
-  assert(parsed?.verified === false, "should fail without CONTEXT.md");
-});
-
-test("scout verification passes with CONTEXT.md", () => {
-  resetState();
-  mkdirSync(join(TEMP_DIR, ".oh-my-beads", "history", "test-feature"), { recursive: true });
-  writeFileSync(
-    join(TEMP_DIR, ".oh-my-beads", "history", "test-feature", "CONTEXT.md"),
-    "# Context\n\nD1 — Use REST API\nD2 — Use PostgreSQL\n"
-  );
-  const { output } = runScript("verify-deliverables.mjs", JSON.stringify({
-    agent_id: "scout-1", role: "scout", directory: TEMP_DIR, feature_slug: "test-feature",
-  }));
-  const parsed = parseOutput(output);
-  assert(parsed?.verified === true, "should pass with CONTEXT.md containing decisions");
-});
-
-test("architect verification fails without plan", () => {
-  resetState();
-  const { output } = runScript("verify-deliverables.mjs", JSON.stringify({
-    agent_id: "arch-1", role: "architect", directory: TEMP_DIR,
-  }));
-  const parsed = parseOutput(output);
-  assert(parsed?.verified === false, "should fail without plan.md");
-});
-
-test("architect verification passes with plan", () => {
-  writeFileSync(join(TEMP_DIR, ".oh-my-beads", "plans", "plan.md"), "# Plan\n\n## Stories\n...");
-  const { output } = runScript("verify-deliverables.mjs", JSON.stringify({
-    agent_id: "arch-1", role: "architect", directory: TEMP_DIR,
-  }));
-  const parsed = parseOutput(output);
-  assert(parsed?.verified === true, "should pass with plan.md");
-});
-
-test("unknown role passes (no expectations)", () => {
-  const { output } = runScript("verify-deliverables.mjs", JSON.stringify({
-    agent_id: "custom-1", role: "custom-agent", directory: TEMP_DIR,
-  }));
-  const parsed = parseOutput(output);
-  assert(parsed?.verified === true, "unknown role should pass");
-});
-
 // ---- SUBAGENT TRACKER ----
 
 console.log("\n=== subagent-tracker.mjs ===\n");
@@ -731,18 +678,6 @@ test("records subagent start", () => {
   assert(tracking.agents.length === 1, "should have 1 agent");
   assert(tracking.agents[0].role === "scout", "role should be scout");
   assert(tracking.agents[0].status === "running", "status should be running");
-});
-
-test("records subagent stop", () => {
-  const { output } = runScript("subagent-tracker.mjs", {
-    cwd: TEMP_DIR, hook_event: "SubagentStop",
-    agent_id: "scout-001", role: "scout", exit_code: 0,
-  });
-  const parsed = parseOutput(output);
-  assertContains(parsed?.additionalContext || "", "Subagent", "stop message");
-  const tracking = JSON.parse(readFileSync(join(STATE_DIR, "subagent-tracking.json"), "utf8"));
-  const agent = tracking.agents.find(a => a.id === "scout-001");
-  assert(agent.status === "stopped", "status should be stopped");
 });
 
 // ---- PRE-COMPACT ----
@@ -1022,19 +957,6 @@ test("blocks Agent for fast-scout", () => {
   assertContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "fast-scout Agent");
 });
 
-// ---- MR.FAST MODE: VERIFY DELIVERABLES ----
-
-console.log("\n=== verify-deliverables.mjs (Mr.Fast) ===\n");
-
-test("fast-scout verification passes without CONTEXT.md", () => {
-  resetState();
-  const { output } = runScript("verify-deliverables.mjs", JSON.stringify({
-    agent_id: "fast-scout-1", role: "fast-scout", directory: TEMP_DIR,
-  }));
-  const parsed = parseOutput(output);
-  assert(parsed?.verified === true, "fast-scout should pass without CONTEXT.md");
-});
-
 // ---- AUDIT FIXES: PRE-TOOL ENFORCER HARDENING ----
 
 console.log("\n=== pre-tool-enforcer.mjs (Audit Fixes) ===\n");
@@ -1071,12 +993,12 @@ test("master can Write to .oh-my-beads/ state files", () => {
   assertNotContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "master .oh-my-beads write");
 });
 
-test("master can write source code (prefers delegation)", () => {
+test("master blocked from writing source code (must delegate to Workers)", () => {
   const { output } = runScript("pre-tool-enforcer.mjs", {
     tool_name: "Write",
     tool_input: { file_path: "/project/src/app.ts" },
   }, { OMB_AGENT_ROLE: "master" });
-  assertNotContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "master source code");
+  assertContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "master source code blocked");
 });
 
 test("scout can Write CONTEXT.md", () => {
@@ -4562,10 +4484,11 @@ Bad advice.
 # Solution
 Wrong solution.
 `);
-  // Write feedback indicating 3 negatives
+  // Write feedback indicating 3 negatives (recent, within 14 days — no decay)
+  const recentFeedbackDate = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(); // 3 days ago
   writeFileSync(
     join(STATE_DIR, "skill-feedback.json"),
-    JSON.stringify({ "bad-skill": { negativeCount: 3, lastNegative: "2025-01-01T00:00:00.000Z", reason: "unhelpful" } })
+    JSON.stringify({ "bad-skill": { negativeCount: 3, lastNegative: recentFeedbackDate, reason: "unhelpful" } })
   );
   const { output } = runScript("skill-injector.mjs", { query: "fix the suppress-test issue", cwd: TEMP_DIR });
   const parsed = parseOutput(output);
@@ -4743,6 +4666,475 @@ Go-specific solution.
   const parsed2 = parseOutput(out2);
   assert(!parsed2?.hookSpecificOutput?.additionalContext, "short trigger 'go' should NOT match 'google'");
   rmSync(skillsDir, { recursive: true, force: true });
+});
+
+// ---- MASTER ROLE DENY: EDIT/MULTIEDIT ----
+
+console.log("\n=== pre-tool-enforcer.mjs (Master Edit/MultiEdit Deny) ===\n");
+
+test("master blocked from Edit (engine-level deny)", () => {
+  const { output } = runScript("pre-tool-enforcer.mjs", {
+    tool_name: "Edit",
+    tool_input: { file_path: "/project/src/app.ts" },
+  }, { OMB_AGENT_ROLE: "master" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "master Edit denied");
+  assert(parsed?.decision === "block", "should use engine-level block for Edit");
+});
+
+test("master blocked from MultiEdit (engine-level deny)", () => {
+  const { output } = runScript("pre-tool-enforcer.mjs", {
+    tool_name: "MultiEdit",
+    tool_input: { file_path: "/project/src/app.ts" },
+  }, { OMB_AGENT_ROLE: "master" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "master MultiEdit denied");
+  assert(parsed?.decision === "block", "should use engine-level block for MultiEdit");
+});
+
+test("master can Write to .oh-my-beads/ plans (fileRestriction)", () => {
+  const { output } = runScript("pre-tool-enforcer.mjs", {
+    tool_name: "Write",
+    tool_input: { file_path: "/project/.oh-my-beads/plans/plan.md" },
+  }, { OMB_AGENT_ROLE: "master" });
+  assertNotContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "master .oh-my-beads plans Write allowed");
+});
+
+test("master blocked from Write to source code", () => {
+  const { output } = runScript("pre-tool-enforcer.mjs", {
+    tool_name: "Write",
+    tool_input: { file_path: "/project/src/main.ts" },
+  }, { OMB_AGENT_ROLE: "master" });
+  assertContains(parseOutput(output)?.hookSpecificOutput?.additionalContext || "", "BLOCKED", "master source code Write blocked");
+});
+
+// ---- SKILL FEEDBACK DECAY ----
+
+console.log("\n=== skill-injector.mjs (Skill Feedback Decay) ===\n");
+
+test("skill with 3 negatives within 14 days is still suppressed", () => {
+  resetState();
+  const skillsDir = join(TEMP_DIR, ".oh-my-beads", "skills");
+  mkdirSync(skillsDir, { recursive: true });
+  writeFileSync(join(skillsDir, "decay-test.md"), `---
+name: decay-test
+description: Decay test skill
+triggers:
+  - decay-trigger-word
+source: test
+tags: []
+---
+# Problem
+Test problem.
+
+# Solution
+Test solution.
+`);
+  // Write feedback with recent negative (within 14 days)
+  const recentDate = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(); // 5 days ago
+  writeFileSync(
+    join(STATE_DIR, "skill-feedback.json"),
+    JSON.stringify({ "decay-test": { negativeCount: 3, lastNegative: recentDate, reason: "not helpful" } })
+  );
+  rmSync(join(STATE_DIR, "injected-skills.json"), { force: true });
+  const { output } = runScript("skill-injector.mjs", { query: "fix the decay-trigger-word issue", cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  // Should still be suppressed (recent negative, no decay)
+  assert(!parsed?.hookSpecificOutput?.additionalContext || !parsed.hookSpecificOutput.additionalContext.includes("decay-test"), "skill with recent 3 negatives should be suppressed");
+  rmSync(skillsDir, { recursive: true, force: true });
+});
+
+test("skill with 3 negatives older than 14 days recovers via decay", () => {
+  resetState();
+  const skillsDir = join(TEMP_DIR, ".oh-my-beads", "skills");
+  mkdirSync(skillsDir, { recursive: true });
+  writeFileSync(join(skillsDir, "decay-recover.md"), `---
+name: decay-recover
+description: Decay recovery test
+triggers:
+  - decay-recover-word
+source: test
+tags: []
+---
+# Problem
+Old problem.
+
+# Solution
+Old solution.
+`);
+  // Write feedback with old negative (>14 days ago) — count 3, decays to 1
+  const oldDate = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString(); // 20 days ago
+  writeFileSync(
+    join(STATE_DIR, "skill-feedback.json"),
+    JSON.stringify({ "decay-recover": { negativeCount: 3, lastNegative: oldDate, reason: "was not helpful" } })
+  );
+  rmSync(join(STATE_DIR, "injected-skills.json"), { force: true });
+  const { output } = runScript("skill-injector.mjs", { query: "fix the decay-recover-word issue", cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  // Should be injected (decayed count = 1, below threshold of 3)
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "decay-recover", "skill with decayed negatives should recover and be injected");
+  rmSync(skillsDir, { recursive: true, force: true });
+});
+
+test("skill with 6 negatives older than 14 days still suppressed (decays to 3)", () => {
+  resetState();
+  const skillsDir = join(TEMP_DIR, ".oh-my-beads", "skills");
+  mkdirSync(skillsDir, { recursive: true });
+  writeFileSync(join(skillsDir, "decay-high.md"), `---
+name: decay-high
+description: High negative count decay test
+triggers:
+  - decay-high-word
+source: test
+tags: []
+---
+# Problem
+High count problem.
+
+# Solution
+High count solution.
+`);
+  // Write feedback with old negative but high count (6 → decays to 3, still >= threshold)
+  const oldDate = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString();
+  writeFileSync(
+    join(STATE_DIR, "skill-feedback.json"),
+    JSON.stringify({ "decay-high": { negativeCount: 6, lastNegative: oldDate, reason: "really not helpful" } })
+  );
+  rmSync(join(STATE_DIR, "injected-skills.json"), { force: true });
+  const { output } = runScript("skill-injector.mjs", { query: "fix the decay-high-word issue", cwd: TEMP_DIR });
+  const parsed = parseOutput(output);
+  // Should still be suppressed (6/2 = 3, still >= threshold)
+  assert(!parsed?.hookSpecificOutput?.additionalContext || !parsed.hookSpecificOutput.additionalContext.includes("decay-high"), "skill decayed to exactly threshold should still be suppressed");
+  rmSync(skillsDir, { recursive: true, force: true });
+});
+
+// ---- CONFIG MODEL OVERRIDES IN KEYWORD-DETECTOR ----
+
+console.log("\n=== keyword-detector.mjs (Config Model Overrides) ===\n");
+
+test("omb keyword output includes model config when overrides exist", () => {
+  resetState();
+  // Write custom config with overrides
+  mkdirSync(OMB_HOME, { recursive: true });
+  writeFileSync(join(OMB_HOME, "config.json"), JSON.stringify({
+    models: { master: "sonnet", worker: "opus" },
+  }));
+  const { output } = runScript("keyword-detector.mjs", { query: "omb build a REST API" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "Model Configuration", "should include model config section");
+  assertContains(ctx, "master: sonnet", "should show master override");
+  assertContains(ctx, "worker: opus", "should show worker override");
+  rmSync(join(OMB_HOME, "config.json"), { force: true });
+});
+
+test("omb keyword output omits model config when no overrides", () => {
+  resetState();
+  // No config.json → all defaults → no section
+  rmSync(join(OMB_HOME, "config.json"), { force: true });
+  const { output } = runScript("keyword-detector.mjs", { query: "omb build a REST API" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertNotContains(ctx, "Model Configuration", "should not include model config when all defaults");
+});
+
+test("mr.fast keyword output includes model config when overrides exist", () => {
+  resetState();
+  mkdirSync(OMB_HOME, { recursive: true });
+  writeFileSync(join(OMB_HOME, "config.json"), JSON.stringify({
+    models: { executor: "opus" },
+  }));
+  const { output } = runScript("keyword-detector.mjs", { query: "mr.fast fix bug in auth.ts" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "Model Configuration", "mr.fast should include model config section");
+  assertContains(ctx, "executor: opus", "should show executor override");
+  rmSync(join(OMB_HOME, "config.json"), { force: true });
+});
+
+// ---- SESSION-START MODEL CONFIG ----
+
+console.log("\n=== session-start.mjs (Model Config) ===\n");
+
+test("session-start shows model config note when overrides exist", () => {
+  resetState();
+  mkdirSync(OMB_HOME, { recursive: true });
+  writeFileSync(join(OMB_HOME, "config.json"), JSON.stringify({
+    models: { master: "sonnet", worker: "opus" },
+  }));
+  const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "startup" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertContains(ctx, "[Model Config]", "should include model config note");
+  assertContains(ctx, "master=sonnet", "should show master override");
+  assertContains(ctx, "worker=opus", "should show worker override");
+  rmSync(join(OMB_HOME, "config.json"), { force: true });
+});
+
+test("session-start omits model config note when no overrides", () => {
+  resetState();
+  rmSync(join(OMB_HOME, "config.json"), { force: true });
+  const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "startup" });
+  const parsed = parseOutput(output);
+  const ctx = parsed?.hookSpecificOutput?.additionalContext || "";
+  assertNotContains(ctx, "[Model Config]", "should not show model config when all defaults");
+});
+
+// ---- TIGHTENED TURBO PATTERNS ----
+
+console.log("\n=== keyword-detector.mjs (Tightened Turbo Patterns) ===\n");
+
+test("turbo: 'fix typo on line 42 of auth.ts' (file + line)", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "mr.fast fix typo on line 42 of auth.ts" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "Intent: turbo", "file+line should be turbo");
+});
+
+test("turbo: 'change the return type in getUserById in user.ts' (file + function name)", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "mr.fast change the return type in getUserById in user.ts" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "Intent: turbo", "file+specific-target should be turbo");
+});
+
+test("turbo: 'remove the console.log at line 15 in index.js' (file + line)", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "mr.fast remove the console.log at line 15 in index.js" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "Intent: turbo", "console.log+line+file should be turbo");
+});
+
+test("standard: 'fix the login validation in auth.ts' (file but no specific location)", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "mr.fast fix the login validation in auth.ts" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "Intent: standard", "vague fix+file should be standard");
+});
+
+test("standard: 'fix the performance issue in the database module' (no specific file)", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "mr.fast fix the performance issue in the database module" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "Intent: standard", "no-file should be standard");
+});
+
+test("standard: 'update readme.md' (file but vague task)", () => {
+  resetState();
+  const { output } = runScript("keyword-detector.mjs", { query: "mr.fast update readme.md" });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "Intent: standard", "vague-task+file should be standard");
+});
+
+// ---- BEADS_VILLAGE CRASH DETECTION ----
+
+console.log("\n=== post-tool-use-failure.mjs (beads_village Crash Detection) ===\n");
+
+test("beads_village tool escalates at 2 failures (not 5)", () => {
+  resetState();
+  // Set up state with 1 prior failure for beads-village tool
+  const now = new Date().toISOString();
+  writeFileSync(
+    join(STATE_DIR, "last-tool-error.json"),
+    JSON.stringify({ tool_name: "mcp__beads-village__ls", retry_count: 1, last_failure_at: now, error_snippet: "err", escalated: false })
+  );
+  const { output } = runScript("post-tool-use-failure.mjs", {
+    cwd: TEMP_DIR, tool_name: "mcp__beads-village__ls", tool_error: "Connection refused",
+  });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "beads_village MCP server may be down", "should show bv-specific message at 2 failures");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "doctor omb", "should suggest doctor omb");
+  const errorState = JSON.parse(readFileSync(join(STATE_DIR, "last-tool-error.json"), "utf8"));
+  assert(errorState.escalated === true, "should be escalated at 2");
+  assert(errorState.retry_count === 2, `retry_count should be 2, got ${errorState.retry_count}`);
+});
+
+test("beads_village tool writes bv_server_down flag to session state", () => {
+  resetState();
+  // Set up an active session and prior failure
+  writeState({ active: true, current_phase: "phase_5_execution", started_at: new Date().toISOString() });
+  const now = new Date().toISOString();
+  writeFileSync(
+    join(STATE_DIR, "last-tool-error.json"),
+    JSON.stringify({ tool_name: "mcp__beads-village__claim", retry_count: 1, last_failure_at: now, error_snippet: "err", escalated: false })
+  );
+  runScript("post-tool-use-failure.mjs", {
+    cwd: TEMP_DIR, tool_name: "mcp__beads-village__claim", tool_error: "Connection refused",
+  });
+  const state = readState();
+  assert(state.bv_server_down === true, "should set bv_server_down flag in session state");
+});
+
+test("non-beads_village tool still escalates at 5 (not 2)", () => {
+  resetState();
+  const now = new Date().toISOString();
+  writeFileSync(
+    join(STATE_DIR, "last-tool-error.json"),
+    JSON.stringify({ tool_name: "Bash", retry_count: 1, last_failure_at: now, error_snippet: "err", escalated: false })
+  );
+  const { output } = runScript("post-tool-use-failure.mjs", {
+    cwd: TEMP_DIR, tool_name: "Bash", tool_error: "Error: command not found",
+  });
+  const parsed = parseOutput(output);
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "attempt 2/5", "non-bv tool should still show /5 threshold");
+  const errorState = JSON.parse(readFileSync(join(STATE_DIR, "last-tool-error.json"), "utf8"));
+  assert(errorState.escalated === false, "should NOT be escalated at 2 for non-bv tool");
+});
+
+// ---- SESSION-END: INJECTED-SKILLS CLEANUP ----
+
+console.log("\n=== session-end.mjs (Injected-Skills Cleanup) ===\n");
+
+test("session-end clears injected-skills.json on session end", () => {
+  resetState();
+  writeState({
+    active: true, current_phase: "phase_3_decomposition",
+    started_at: new Date().toISOString(),
+  });
+  // Pre-populate injected-skills.json with some skills
+  writeFileSync(
+    join(STATE_DIR, "injected-skills.json"),
+    JSON.stringify({ skills: ["auth-fix", "db-fix"], session_started_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+  );
+  runScript("session-end.mjs", { cwd: TEMP_DIR });
+  // Verify injected-skills.json was cleared
+  const injectedPath = join(STATE_DIR, "injected-skills.json");
+  assert(existsSync(injectedPath), "injected-skills.json should still exist (cleared, not deleted)");
+  const data = JSON.parse(readFileSync(injectedPath, "utf8"));
+  assert(data.reason === "session_end", `should have session_end reason, got ${data.reason}`);
+  assert(!data.skills || !Array.isArray(data.skills), "skills array should be cleared");
+});
+
+// ---- SKILL INJECTOR: SESSION-SCOPED DEDUP ----
+
+console.log("\n=== skill-injector.mjs (Session-Scoped Dedup) ===\n");
+
+test("skill-injector treats different session started_at as fresh (re-injects)", () => {
+  resetState();
+  const skillsDir = join(TEMP_DIR, ".oh-my-beads", "skills");
+  mkdirSync(skillsDir, { recursive: true });
+  writeFileSync(join(skillsDir, "session-dedup-test.md"), `---
+name: session-dedup-test
+description: Session dedup test
+triggers:
+  - sessiondedup
+source: project
+tags: []
+---
+# Problem
+Session dedup problem.
+
+# Solution
+Session dedup solution.
+`);
+  // Write a session with started_at = T1
+  const t1 = "2025-06-01T00:00:00.000Z";
+  writeFileSync(
+    join(STATE_DIR, "session.json"),
+    JSON.stringify({ active: true, current_phase: "bootstrap", mode: "mr.beads", started_at: t1 })
+  );
+  // First injection — should work
+  const { output: out1 } = runScript("skill-injector.mjs", { query: "fix the sessiondedup issue", cwd: TEMP_DIR });
+  const parsed1 = parseOutput(out1);
+  assertContains(parsed1?.hookSpecificOutput?.additionalContext || "", "session-dedup-test", "first injection should work");
+
+  // Second injection with SAME session — should be suppressed (dedup)
+  const { output: out2 } = runScript("skill-injector.mjs", { query: "fix the sessiondedup issue again", cwd: TEMP_DIR });
+  const parsed2 = parseOutput(out2);
+  assert(!parsed2?.hookSpecificOutput?.additionalContext, "same session should suppress (dedup)");
+
+  // Now change session to a new started_at = T2 (simulates new session)
+  const t2 = "2025-06-02T00:00:00.000Z";
+  writeFileSync(
+    join(STATE_DIR, "session.json"),
+    JSON.stringify({ active: true, current_phase: "bootstrap", mode: "mr.beads", started_at: t2 })
+  );
+  // Third injection — should work (new session resets dedup)
+  const { output: out3 } = runScript("skill-injector.mjs", { query: "fix the sessiondedup issue once more", cwd: TEMP_DIR });
+  const parsed3 = parseOutput(out3);
+  assertContains(parsed3?.hookSpecificOutput?.additionalContext || "", "session-dedup-test", "new session should re-inject");
+
+  rmSync(skillsDir, { recursive: true, force: true });
+});
+
+// ---- DIRECTIVE DETECTION: ZERO I/O OPTIMIZATION ----
+
+console.log("\n=== keyword-detector.mjs (Directive Zero-I/O Optimization) ===\n");
+
+test("directive detection skips I/O when no directive pattern matches", () => {
+  resetState();
+  // Initialize project memory with known state
+  const emptyMemory = {
+    version: 1, lastScanned: Date.now(),
+    techStack: { languages: [], frameworks: [], pkgManager: "", runtime: "" },
+    build: { test: "", build: "", lint: "", dev: "", scripts: {} },
+    customNotes: [], hotPaths: [], userDirectives: [],
+  };
+  writeFileSync(join(STATE_DIR, "project-memory.json"), JSON.stringify(emptyMemory, null, 2));
+
+  // A prompt with no directive keywords at all
+  runScript("keyword-detector.mjs", { query: "omb build me a REST API" });
+
+  // Project memory should NOT have any directives (no I/O was done for directives)
+  const updatedMemory = JSON.parse(readFileSync(join(STATE_DIR, "project-memory.json"), "utf8"));
+  assert(updatedMemory.userDirectives.length === 0, `should have 0 directives for non-directive prompt, got ${updatedMemory.userDirectives.length}`);
+});
+
+test("directive quick check correctly identifies directive keywords", () => {
+  // extractDirectives is already exported from keyword-detector.mjs
+  // We test it indirectly via the keyword-detector script behavior
+  // and directly via the extractDirectives already imported at module level
+
+  // Non-directive prompts: should NOT trigger directive detection
+  // (tested by running keyword-detector with non-directive prompts and checking memory is untouched)
+  resetState();
+  const emptyMemory2 = {
+    version: 1, lastScanned: Date.now(),
+    techStack: { languages: [], frameworks: [], pkgManager: "", runtime: "" },
+    build: { test: "", build: "", lint: "", dev: "", scripts: {} },
+    customNotes: [], hotPaths: [], userDirectives: [],
+  };
+  writeFileSync(join(STATE_DIR, "project-memory.json"), JSON.stringify(emptyMemory2, null, 2));
+
+  // Non-directive prompt — should not add any directives
+  runScript("keyword-detector.mjs", { query: "fix the login bug" });
+  const mem1 = JSON.parse(readFileSync(join(STATE_DIR, "project-memory.json"), "utf8"));
+  assert(mem1.userDirectives.length === 0, "non-directive prompt 'fix the login bug' should not add directives");
+
+  // Directive prompt — should add a directive
+  runScript("keyword-detector.mjs", { query: "always use TypeScript strict mode" });
+  const mem2 = JSON.parse(readFileSync(join(STATE_DIR, "project-memory.json"), "utf8"));
+  assert(mem2.userDirectives.length > 0, "directive prompt 'always use' should add directive");
+});
+
+// ---- PROJECT MEMORY: FLUSH ON EVERY MUTATION ----
+
+console.log("\n=== post-tool-verifier.mjs (Memory Flush on Every Mutation) ===\n");
+
+test("post-tool-verifier saves project memory after single hot path mutation (no throttle)", () => {
+  resetState();
+  writeState({ active: true, mode: "mr.beads", current_phase: "phase_5_execution", started_at: new Date().toISOString() });
+  const emptyMemory = {
+    version: 1, lastScanned: Date.now(),
+    techStack: { languages: [], frameworks: [], pkgManager: "", runtime: "" },
+    build: { test: "", build: "", lint: "", dev: "", scripts: {} },
+    customNotes: [], hotPaths: [], userDirectives: [],
+  };
+  writeFileSync(join(STATE_DIR, "project-memory.json"), JSON.stringify(emptyMemory, null, 2));
+
+  // Just 1 tool call (was previously insufficient with MEMORY_SAVE_INTERVAL=10)
+  runScript("post-tool-verifier.mjs", {
+    cwd: TEMP_DIR,
+    tool_name: "Read",
+    tool_input: { file_path: "src/single-mutation-test.ts" },
+    tool_output: "file contents...",
+  });
+
+  // Memory should already be saved with the hot path
+  const updatedMemory = JSON.parse(readFileSync(join(STATE_DIR, "project-memory.json"), "utf8"));
+  const hotPath = updatedMemory.hotPaths.find(p => p.path === "src/single-mutation-test.ts");
+  assert(hotPath, "should save hot path after a single tool call (no throttle)");
+  assert(hotPath.accessCount === 1, `accessCount should be 1, got ${hotPath.accessCount}`);
 });
 
 // ============================================================

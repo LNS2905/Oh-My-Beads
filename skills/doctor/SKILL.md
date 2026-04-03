@@ -55,7 +55,7 @@ Read `.claude/settings.json` (project-level):
   - `Stop` → persistent-mode.cjs, context-guard-stop.mjs
   - `PreCompact` → pre-compact.mjs
   - `SubagentStart` → subagent-tracker.mjs
-  - `SubagentStop` → subagent-tracker.mjs, verify-deliverables.mjs
+  - `SubagentStop` → subagent-stop.mjs
   - `SessionEnd` → session-end.mjs
 - Also check `hooks/hooks.json` for consistency with settings.json
 - Count: X/10 events wired

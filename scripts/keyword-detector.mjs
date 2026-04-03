@@ -15,6 +15,7 @@ import { upgradePrompt } from "./prompt-leverage.mjs";
 import { getProjectStateRoot, ensureDir } from "./state-tools/resolve-state-dir.mjs";
 import { hookOutput as _hookOutput, getQuietLevel } from "./helpers.mjs";
 import { loadMemory, saveMemory, addDirective } from "./project-memory.mjs";
+import { loadConfig, getModelForRole, DEFAULT_MODELS } from "./config.mjs";
 
 // --- Config ---
 const KEYWORDS = [
@@ -40,6 +41,29 @@ const KEYWORDS = [
 
 function getStateDir() {
   return getProjectStateRoot(process.cwd());
+}
+
+// --- Model Config ---
+
+/**
+ * Build a model configuration section for skill invocations.
+ * Only includes roles that differ from defaults.
+ * @returns {string} Model config section or empty string if all defaults.
+ */
+function buildModelConfigSection() {
+  try {
+    const config = loadConfig();
+    const overrides = [];
+    for (const [role, model] of Object.entries(config.models)) {
+      if (model !== DEFAULT_MODELS[role]) {
+        overrides.push(`  - ${role}: ${model}`);
+      }
+    }
+    if (overrides.length === 0) return "";
+    return `\n\n## Model Configuration\nCustom model overrides active:\n${overrides.join("\n")}\nAll other roles use defaults.`;
+  } catch {
+    return "";
+  }
 }
 
 // --- Helpers ---
@@ -112,7 +136,8 @@ function writeSessionState(phase, mode = "mr.beads", intent = undefined) {
 
 // --- Mr.Fast Intent Classification ---
 
-// Turbo: explicit file+line reference AND/OR explicit approach targeting a specific file
+// Turbo: requires BOTH an explicit file path (with extension) AND a specific location
+// (line number, function name, or very specific change like "remove console.log")
 const TURBO_PATTERNS = [
   // file.ext:linenum — explicit file with line number
   /[\w./\\-]+\.\w{1,5}\s*:\s*\d+/i,
@@ -120,8 +145,14 @@ const TURBO_PATTERNS = [
   /\bline\s+\d+\s+(?:of|in)\s+[\w./\\-]+\.\w{1,5}\b/i,
   // on line N of/in file.ext
   /\bon\s+line\s+\d+\s+(?:of|in)\s+[\w./\\-]+\.\w{1,5}\b/i,
-  // fix/change/update X in file.ext — specific action targeting a specific file
-  /\b(?:fix|change|replace|update|remove|add|rename)\b.{0,60}\b(?:in|at|on)\s+[\w./\\-]+\.\w{1,5}\b/i,
+  // at line N in file.ext
+  /\bat\s+line\s+\d+\s+(?:in|of)\s+[\w./\\-]+\.\w{1,5}\b/i,
+  // action + specific target (well-known code element) + in file.ext
+  /\b(?:fix|change|replace|update|remove|add|rename)\s+(?:the\s+)?(?:return\s+type|type\s+annotation|import|export|console\.log|debugger)\b.{0,40}\b(?:in|at|on|of)\s+[\w./\\-]+\.\w{1,5}\b/i,
+  // action + "function/method/variable/class NAME" + in file.ext
+  /\b(?:fix|change|replace|update|remove|add|rename)\s+(?:the\s+)?(?:function|method|variable|class|const|let|var)\s+\w+\b.{0,40}\b(?:in|at|on|of)\s+[\w./\\-]+\.\w{1,5}\b/i,
+  // action + camelCase/snake_case identifier + in file.ext — named target
+  /\b(?:change|replace|update|rename)\s+(?:the\s+)?\w+(?:[A-Z]\w*|_\w+)\b.{0,40}\b(?:in|at|on|of)\s+[\w./\\-]+\.\w{1,5}\b/i,
 ];
 
 // Complex: large-scope work → suggest Mr.Beads instead
@@ -170,12 +201,20 @@ const DIRECTIVE_PATTERNS = [
   /\bmake\s+sure\s+(?:to\s+)?always\s+(.+?)(?:\.|$)/i,
 ];
 
+// Fast pre-check: combined keyword regex to skip all patterns quickly when no directive keywords present.
+// Zero I/O path for non-directive prompts.
+const DIRECTIVE_QUICK_CHECK = /\b(?:always|never|prefer|don'?t|make\s+sure)\b/i;
+
 /**
  * Extract user directives from a raw prompt. Returns array of directive strings.
+ * Uses DIRECTIVE_QUICK_CHECK for fast early-return (zero I/O for non-directive prompts).
  * @param {string} rawPrompt
  * @returns {string[]}
  */
 export function extractDirectives(rawPrompt) {
+  // Fast path: skip all pattern matching if no directive keywords present
+  if (!DIRECTIVE_QUICK_CHECK.test(rawPrompt)) return [];
+
   const directives = [];
   for (const pattern of DIRECTIVE_PATTERNS) {
     const match = rawPrompt.match(pattern);
@@ -365,8 +404,9 @@ process.stdin.on("end", () => {
       // - turbo → executor (skip fast-scout entirely)
       // - standard → fast-scout (then executor)
       const skill = intent === "turbo" ? "oh-my-beads:executor" : "oh-my-beads:fast-scout";
+      const modelConfig = buildModelConfigSection();
       hookOutput(
-        `[MAGIC KEYWORD: mr-fast]\n\nYou MUST invoke the skill using the Skill tool:\n\nSkill: ${skill}\n\nIntent: ${intent}\n\nUser request:\n${augmented}\n\nIMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`
+        `[MAGIC KEYWORD: mr-fast]\n\nYou MUST invoke the skill using the Skill tool:\n\nSkill: ${skill}\n\nIntent: ${intent}\n\nUser request:\n${augmented}${modelConfig}\n\nIMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`
       );
       return;
     }
@@ -387,8 +427,9 @@ process.stdin.on("end", () => {
     }
     writeSessionState("bootstrap", "mr.beads");
     const { augmented } = upgradePrompt(raw, { mode: "mr.beads" });
+    const modelConfig = buildModelConfigSection();
     hookOutput(
-      `[MAGIC KEYWORD: oh-my-beads]\n\nYou MUST invoke the skill using the Skill tool:\n\nSkill: oh-my-beads:master\n\nUser request:\n${augmented}\n\nIMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`
+      `[MAGIC KEYWORD: oh-my-beads]\n\nYou MUST invoke the skill using the Skill tool:\n\nSkill: oh-my-beads:master\n\nUser request:\n${augmented}${modelConfig}\n\nIMPORTANT: Invoke the skill IMMEDIATELY. Do not proceed without loading the skill instructions.`
     );
     return;
   }

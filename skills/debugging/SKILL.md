@@ -226,7 +226,7 @@ Write a debug note for compounding to capture later:
 **Signal**: <how to recognize this pattern in future>
 ```
 
-Write to `.oh-my-beads/state/debug-notes.md` (appended).
+Write to `.oh-my-beads/history/debug-notes.md` (appended, project-level, committed to repo).
 
 Tell the user: "New failure pattern found. Run compounding skill to promote this to learnings."
 

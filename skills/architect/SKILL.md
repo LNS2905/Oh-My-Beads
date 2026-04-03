@@ -55,6 +55,17 @@ inform later ones.
    - Score and read strong matches; skip weak matches
    - Note findings for inclusion in plan.md
 3. **Research** codebase via Explorer subagents:
+
+   <HARD-GATE>
+   You MUST spawn Explorer subagents (model="haiku") for systematic codebase research.
+   DO NOT use Read/Glob/Grep for broad exploration yourself.
+   Direct file reads are ONLY allowed for:
+   - Specific files referenced by Explorer reports (max 5 direct reads)
+   - Plan files (.oh-my-beads/plans/)
+   - Config files (package.json, tsconfig.json, etc.)
+   If you find yourself doing extensive Glob/Grep searches, STOP and spawn an Explorer instead.
+   </HARD-GATE>
+
    - Spawn 2-4 Explorer subagents (model="haiku") in parallel for different research areas
    - Each Explorer receives a focused research query (e.g., "map auth middleware patterns", "find all database schema files and relationships", "trace the API route structure")
    - Explorers report back with patterns, dependencies, file structures

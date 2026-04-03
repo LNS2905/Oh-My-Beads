@@ -70,11 +70,19 @@ process.stdin.on("end", () => {
   // Write updated state
   writeJsonAtomic(sessionFile, session);
 
-  // Clean up last-tool-error.json (transient, no value across sessions)
+  // Clean up transient state files (no value across sessions)
   const errorFile = join(stateDir, "last-tool-error.json");
   if (existsSync(errorFile)) {
     try {
       writeJsonAtomic(errorFile, { cleared_at: now, reason: "session_end" });
+    } catch { /* best effort */ }
+  }
+
+  // Clear injected-skills.json so skills can be re-injected in the next session
+  const injectedSkillsFile = join(stateDir, "injected-skills.json");
+  if (existsSync(injectedSkillsFile)) {
+    try {
+      writeJsonAtomic(injectedSkillsFile, { cleared_at: now, reason: "session_end" });
     } catch { /* best effort */ }
   }
 

@@ -779,7 +779,7 @@ test("normal startup with no session shows only banner", () => {
   resetState();
   const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "startup" });
   const parsed = parseOutput(output);
-  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "oh-my-beads v1.2.0 loaded", "should show banner");
+  assertContains(parsed?.hookSpecificOutput?.additionalContext || "", "oh-my-beads v1.3.0 loaded", "should show banner");
   assert(!(parsed?.hookSpecificOutput?.additionalContext || "").includes("ACTIVE SESSION"), "should not show active session");
 });
 
@@ -817,7 +817,7 @@ test("no first-run banner when setupVersion matches current", () => {
   // Write setup.json with current version
   writeFileSync(
     join(OMB_HOME, "setup.json"),
-    JSON.stringify({ setupCompleted: new Date().toISOString(), setupVersion: "1.2.0" })
+    JSON.stringify({ setupCompleted: new Date().toISOString(), setupVersion: "1.3.0" })
   );
   const { output } = runScript("session-start.mjs", { cwd: TEMP_DIR, source: "startup" });
   const parsed = parseOutput(output);

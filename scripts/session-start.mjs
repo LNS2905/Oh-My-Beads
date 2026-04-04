@@ -24,7 +24,7 @@ import { readJson, hookOutput as _hookOutput } from "./helpers.mjs";
 import { loadMemory, needsRescan, rescan, saveMemory, formatSummary } from "./project-memory.mjs";
 import { loadConfig, DEFAULT_MODELS } from "./config.mjs";
 
-const PLUGIN_VERSION = "v1.2.0";
+const PLUGIN_VERSION = "v1.3.0";
 
 const hookOutput = (additionalContext) => {
   _hookOutput("SessionStart", additionalContext);
